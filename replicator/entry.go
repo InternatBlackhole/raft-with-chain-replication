@@ -16,10 +16,10 @@ func (e entry) isDirty() bool {
 	return e.pendingVersion > e.commitedVersion
 }
 
-func (e entry) isCommited() bool {
+func (e entry) isUpToDate() bool {
 	return e.pendingVersion == e.commitedVersion
 }
 
-func newEntry(ent *rpc.InternalEntry) *entry {
-	return &entry{key: ent.Key, value: ent.Value, commitedVersion: ent.Version, pendingVersion: ent.Version}
+func newEntry(ent *rpc.InternalEntry) entry {
+	return entry{key: ent.Key, value: ent.Value, commitedVersion: ent.Version, pendingVersion: ent.Version}
 }

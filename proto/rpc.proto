@@ -4,6 +4,7 @@ package rpc;
 option go_package= "/rpc";
 
 import "google/protobuf/empty.proto";
+import "google/protobuf/wrappers.proto";
 
 message Node {
     string address = 1;
@@ -50,6 +51,8 @@ service Controller {
     rpc GetHead(google.protobuf.Empty) returns (Node);
     // GetTail returns the tail address and port
     rpc GetTail(google.protobuf.Empty) returns (Node);
+    // Gets the port of the current controller receiving heartbeat
+    rpc GetHeartbeatEndpoint(google.protobuf.Empty) returns (google.protobuf.UInt32Value);
 }
 
 service PutProvider {
@@ -57,5 +60,5 @@ service PutProvider {
 }
 
 service ReadProvider {
-    rpc Get(Entry) returns (Entry);
+    rpc Get(google.protobuf.StringValue) returns (Entry);
 }
