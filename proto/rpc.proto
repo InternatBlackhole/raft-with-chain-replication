@@ -1,0 +1,61 @@
+syntax = "proto3";
+
+package rpc;
+option go_package= "/rpc";
+
+import "google/protobuf/empty.proto";
+
+message Node {
+    string address = 1;
+    uint32 port = 2;
+}
+
+message Entry {
+    string key = 1;
+    string value = 2;
+}
+
+message InternalEntry {
+    string key = 1;
+    string value = 2;
+    uint32 version = 3;
+}
+
+message EntryCommited {
+    string key = 1;
+    // The value is empty if the entry is deleted
+    // The value is present for optimization when a node
+    //string value = 2;
+    uint32 version = 3;
+}
+
+service ReplicationProvider {
+    rpc PutInternal(InternalEntry) returns (google.protobuf.Empty);
+    rpc Commit(EntryCommited) returns (google.protobuf.Empty);
+}
+
+service ReplicationControl {
+    // The parameter is the node that is the new next node of the current node
+    rpc NextChanged(Node) returns (google.protobuf.Empty);
+    // The parameter is the node that is the new prev node of the current node
+    rpc PrevChanged(Node) returns (google.protobuf.Empty);
+    // The parameter is the node that is the new leader
+    rpc LeaderChanged(Node) returns (google.protobuf.Empty);
+}
+
+service Controller {
+    // GerLeader returns the leader address and port
+    rpc GetLeader(google.protobuf.Empty) returns (Node);
+    // GetHead returns the head address and port
+    rpc GetHead(google.protobuf.Empty) returns (Node);
+    // GetTail returns the tail address and port
+    rpc GetTail(google.protobuf.Empty) returns (Node);
+}
+
+service PutProvider {
+    rpc Put(Entry) returns (google.protobuf.Empty);
+}
+
+service ReadProvider {
+    rpc Get(Entry) returns (Entry);
+}
