@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/signal"
 	"strconv"
-	"sync"
-	"time"
+	"syscall"
 	pb "tkNaloga04/rpc"
 
 	"google.golang.org/grpc"
@@ -17,134 +17,114 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
-var myPort, meId int
-var controllerHostname string
-var leader controllerInfo = controllerInfo{ctrl: nil}
-var next, prev replicatorInfo = replicatorInfo{repl: nil}, replicatorInfo{repl: nil}
+var chain *chainControl
 
-type replicatorInfo struct {
-	repl pb.ReplicationProviderClient
-	mtx  sync.Mutex
-}
-
-type controllerInfo struct {
-	ctrl pb.ControllerClient
-	mtx  sync.Mutex
-}
-
-func myNext() pb.ReplicationProviderClient {
-	next.mtx.Lock()
-	defer next.mtx.Unlock()
-	return next.repl
-}
-
-func myPrev() pb.ReplicationProviderClient {
-	prev.mtx.Lock()
-	defer prev.mtx.Unlock()
-	return prev.repl
-}
-
-func serverMain() {
+func serverMain(controllerHostname string, myPort int, meId int) {
 	// Connect to the controller node to get leader info
 	ctrl := getControllerNode(controllerHostname)
 
-	leader, err := ctrl.GetLeader(context.Background(), &emptypb.Empty{})
+	leaderNode, err := ctrl.GetLeader(context.Background(), &emptypb.Empty{})
 	if err != nil {
 		panic(errors.Join(errors.New("could not get leader info from controller"), err))
 	}
 
-	// Ustvari nov strežnik
+	chainControl, initDone := newChainControl(leaderNode)
+
 	s := grpc.NewServer()
 
-	// Registriraj Replicator strežnik
-	pb.RegisterReplicationProviderServer(s, NewReplicatorNode(myPrev, myNext))
-	lst, err := net.Listen("tcp", "localhost:"+strconv.Itoa(myPort))
-	if err != nil {
-		panic(err)
-	}
+	// Registration of the replication provider
+	node := NewReplicatorNode(chainControl.prevGetter(), chainControl.nextGetter())
+	pb.RegisterReplicationProviderServer(s, node)
+	pb.RegisterPutProviderServer(s, node)
+	pb.RegisterReadProviderServer(s, node)
 
-	fmt.Printf("Node %d started on port %d\n", meId+1, myPort)
-	fmt.Println("Waiting 100 ms for other nodes to start...")
-	time.Sleep(100 * time.Millisecond)
-	//i hope all processes are up and running thus far
+	pb.RegisterControllerEventsServer(s, chainControl)
+	fmt.Println("Registered Servers")
 
-	// get next and prev
-	if myPort != startPort {
-		conn, err := grpc.Dial("localhost:"+strconv.Itoa(myPort-1), grpc.WithTransportCredentials(insecure.NewCredentials()))
-		if err != nil {
-			panic(err)
-		}
-		prev = pb.NewReplicationProviderClient(conn)
-		fmt.Println("Connected to previous node")
-	}
-
-	if myPort != startPort+totalNodes-1 {
-		conn, err := grpc.Dial("localhost:"+strconv.Itoa(myPort+1), grpc.WithTransportCredentials(insecure.NewCredentials()))
-		if err != nil {
-			panic(err)
-		}
-		next = pb.NewReplicationProviderClient(conn)
-		fmt.Println("Connected to next node")
-	}
+	//listen on all addresses
+	lst, err := net.Listen("tcp", ":"+strconv.Itoa(myPort))
+	errPanic(err)
 
 	err = s.Serve(lst)
 	if err != nil {
 		//fatal error on Serve
 		panic(err)
 	}
+	fmt.Printf("Node %d started on port %d\n", meId+1, myPort)
+
+	fmt.Println("Registering with controller...")
+	hostname, err := os.Hostname()
+	errPanic(err)
+	chainControl.mtx.RLock()
+	//register also reports next and prev node info
+	_, err = chainControl.leader.Register(context.Background(), &pb.Node{Address: hostname, Port: uint32(myPort)})
+	if err != nil {
+		errors.Join(errors.New("could not register with controller"), err)
+	}
+	chainControl.mtx.RUnlock()
+
+	fmt.Println("Waiting for chain info from controller...")
+	<-initDone
+	fmt.Println("Chain info received from controller")
+	fmt.Println("Replicator node running")
+
+	c := make(chan os.Signal, 1)
+	signal.Notify(c)
+
+	for {
+		s := <-c
+		if s == os.Interrupt || s == syscall.SIGTERM {
+			fmt.Println("Interrupted, exiting...")
+			os.Exit(0)
+		}
+		fmt.Println("Got signal:", s)
+	}
 }
 
-func getNode(hostname string) pb.ReplicationProviderClient {
-	conn, err := grpc.Dial(hostname, grpc.WithTransportCredentials(insecure.NewCredentials()))
+func errPanic(err error) {
 	if err != nil {
 		panic(err)
 	}
-	return pb.NewReplicationProviderClient(conn)
 }
 
 func getControllerNode(hostname string) pb.ControllerClient {
 	conn, err := grpc.Dial(hostname, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		panic(err)
-	}
+	errPanic(err)
 	return pb.NewControllerClient(conn)
 }
 
-func writeMyConnectInfo() {
+func writeMyConnectInfo(meId int, myPort int) {
 	file, err := os.Create("connectInfo_" + strconv.Itoa(meId) + ".txt")
-	if err != nil {
-		panic(err)
-	}
+	errPanic(err)
 	defer file.Close()
 
 	host, err := os.Hostname()
-	if err != nil {
-		panic(err)
-	}
+	errPanic(err)
 
 	str := fmt.Sprintf("%s:%d\n", host, myPort)
 	file.WriteString(str)
 }
 
 func main() {
-	flag.StringVar(&controllerHostname, "controller", "", "controller hostname:port combination")
-	flag.IntVar(&myPort, "port", 0, "port to listen on")
-	flag.IntVar(&meId, "meId", -1, "my id")
+	hostname := flag.String("controller", "", "controller hostname:port combination")
+	myport := flag.Int("port", 0, "port to listen on")
+	id := flag.Int("meId", -1, "my id")
 
 	flag.Parse()
 
-	if controllerHostname == "" {
+	if *hostname == "" {
 		panic("controller hostname not set")
 	}
 
-	if myPort == 0 {
+	if *myport == 0 {
 		panic("port not set")
 	}
 
-	if meId <= -1 {
+	if *id <= -1 {
 		panic("meId not set")
 	}
 
-	fmt.Printf("Starting node %d on port %d\n", meId, myPort)
-	serverMain()
+	fmt.Printf("Starting node %d on port %d\n", *id, *myport)
+	writeMyConnectInfo(*id, *myport)
+	serverMain(*hostname, *myport, *id)
 }

@@ -21,5 +21,5 @@ func (e entry) isUpToDate() bool {
 }
 
 func newEntry(ent *rpc.InternalEntry) entry {
-	return entry{key: ent.Key, value: ent.Value, commitedVersion: ent.Version, pendingVersion: ent.Version}
+	return entry{key: ent.Key, value: ent.Value, commitedVersion: 0, pendingVersion: ent.Version}
 }

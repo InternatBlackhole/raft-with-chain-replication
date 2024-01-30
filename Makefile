@@ -1,19 +1,25 @@
-export CC=go build
-export GOOS=linux
-export GOARCH=amd64
-export MODULE=tkNaloga04
+CC=go build
+GOOS=linux
+GOARCH=amd64
+MODULE=tkNaloga04
+CFLAGS=
 
-SUBDIRS = proto client replicator controller
-.PHONY: clean subdirs $(SUBDIRS)
+$(shell mkdir -p $(PWD)/bin)
 
-subdirs:
-	@for dir in $(SUBDIRS); do \
-		cd $(PWD)/$$dir && $(MAKE); \
-	done
+PACKAGES=client replicator controller
+TARGETS=$(addprefix ./bin/,$(PACKAGES))
+
+.PHONY: clean
 	
-all: subdirs
+all: $(TARGETS)
+	echo $(TARGETS)
 
 clean:
-	@for dir in $(SUBDIRS); do \
-		cd $(PWD)/$$dir && $(MAKE) clean; \
-	done
+	-rm -rf ./bin/*
+	-rm -f ./rpc/*.pb.go
+
+proto: proto/*.proto
+	protoc --go_out=$(PWD) --go-grpc_out=$(PWD) $^
+
+$(TARGETS): proto
+	-$(CC) -o $@ $(MODULE)/$(notdir $@)

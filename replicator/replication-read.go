@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"tkNaloga04/rpc"
+
+	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 // GetProvider implementation
-func (r *replicatorNode) Get(ctx context.Context, in *rpc.Entry) (*rpc.Entry, error) {
+func (r *replicatorNode) Get(ctx context.Context, key *wrapperspb.StringValue) (*rpc.Entry, error) {
 	next := r.next()
-	val, exists := r.storage.Load(in.Key)
+	val, exists := r.storage.Load(key.Value)
 	if !exists {
 		return nil, errors.New(myerr("key not found"))
 	}
@@ -19,22 +21,23 @@ func (r *replicatorNode) Get(ctx context.Context, in *rpc.Entry) (*rpc.Entry, er
 
 	if next == nil {
 		// i am a tail node, get
-		fmt.Printf("Got value %s for key %s\n", vale.value, in.Key)
-		return &rpc.Entry{Key: in.Key, Value: vale.value}, nil
+		fmt.Printf("Got value %s for key %s\n", vale.value, key.Value)
+		return &rpc.Entry{Key: key.Value, Value: vale.value}, nil
 	}
 
 	// i am not a tail node
 	if vale.isDirty() {
-		fmt.Printf("Got uncommited value %s for key %s. Waiting for commit...\n", vale.value, in.Key)
+		fmt.Printf("Got uncommited value %s for key %s. Waiting for commit...\n", vale.value, key.Value)
 		//wait for commit
-		subs := r.agent.SubscribeOnce(in.Key)
+		subs := r.publisher.SubscribeOnce(key.Value)
 		for {
 			select {
 			case read := <-subs:
 				{
+					//when pendingVersion == commitedVersion, we have a commited value
 					if read.commitedVersion == vale.pendingVersion {
-						fmt.Printf("Got commited value %s for key %s\n", read.value, in.Key)
-						return &rpc.Entry{Key: in.Key, Value: read.value}, nil
+						fmt.Printf("Got commited value %s for key %s\n", read.value, key.Value)
+						return &rpc.Entry{Key: key.Value, Value: read.value}, nil
 					}
 					fmt.Printf("Got commited value %s for key %s (version %d), but was waiting for version %d\n", read.value, read.key, read.commitedVersion, vale.pendingVersion)
 				}
@@ -43,8 +46,8 @@ func (r *replicatorNode) Get(ctx context.Context, in *rpc.Entry) (*rpc.Entry, er
 			}
 		}
 	} else {
-		fmt.Printf("Got commited value %s for key %s\n", vale.value, in.Key)
-		return &rpc.Entry{Key: in.Key, Value: vale.value}, nil
+		fmt.Printf("Got commited value %s for key %s\n", vale.value, key.Value)
+		return &rpc.Entry{Key: key.Value, Value: vale.value}, nil
 	}
 
 }

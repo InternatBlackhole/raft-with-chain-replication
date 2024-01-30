@@ -35,7 +35,7 @@ service ReplicationProvider {
     rpc Commit(EntryCommited) returns (google.protobuf.Empty);
 }
 
-service ReplicationControl {
+service ControllerEvents {
     // The parameter is the node that is the new next node of the current node
     rpc NextChanged(Node) returns (google.protobuf.Empty);
     // The parameter is the node that is the new prev node of the current node
@@ -53,6 +53,8 @@ service Controller {
     rpc GetTail(google.protobuf.Empty) returns (Node);
     // Gets the port of the current controller receiving heartbeat
     rpc GetHeartbeatEndpoint(google.protobuf.Empty) returns (google.protobuf.UInt32Value);
+    // Register into the chain, triggers NextChanged and PrevChanged events
+    rpc Register(Node) returns (google.protobuf.Empty);
 }
 
 service PutProvider {

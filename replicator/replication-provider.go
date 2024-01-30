@@ -25,11 +25,10 @@ const (
 )*/
 
 type replicatorNode struct {
-	storage sync.Map // perhaps make it a sync.Map
-	prev    NextReplicator
-	next    NextReplicator
-	//nType   NodeType
-	agent *Agent
+	storage   sync.Map // perhaps make it a sync.Map
+	prev      NextReplicator
+	next      NextReplicator
+	publisher *Agent
 
 	rpc.UnimplementedReplicationProviderServer
 	rpc.UnimplementedReadProviderServer
@@ -41,7 +40,7 @@ func myerr(err string) string {
 }
 
 func NewReplicatorNode(prev NextReplicator, next NextReplicator) *replicatorNode {
-	return &replicatorNode{prev: prev, next: next, agent: NewAgent()}
+	return &replicatorNode{prev: prev, next: next, publisher: NewAgent()}
 }
 
 func (r *replicatorNode) PutInternal(ctx context.Context, in *rpc.InternalEntry) (*emptypb.Empty, error) {
@@ -97,7 +96,7 @@ func (r *replicatorNode) Commit(ctx context.Context, in *rpc.EntryCommited) (*em
 	r.storage.Store(in.Key, v)
 	fmt.Printf("Commited value %s for key %s\n", v.value, in.Key)
 
-	go r.agent.Publish(in.Key, entry{value: v.value, commitedVersion: in.Version, pendingVersion: v.pendingVersion, key: in.Key})
+	go r.publisher.Publish(in.Key, entry{value: v.value, commitedVersion: in.Version, pendingVersion: v.pendingVersion, key: in.Key})
 
 	var err error = nil
 	prev := r.prev()
