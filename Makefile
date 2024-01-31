@@ -9,10 +9,9 @@ $(shell mkdir -p $(PWD)/bin)
 PACKAGES=client replicator controller
 TARGETS=$(addprefix ./bin/,$(PACKAGES))
 
-.PHONY: clean
+.PHONY: clean, proto, $(TARGETS)
 	
 all: $(TARGETS)
-	echo $(TARGETS)
 
 clean:
 	-rm -rf ./bin/*

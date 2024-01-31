@@ -32,7 +32,7 @@ type chainControl struct {
 	leaderHb    *net.UDPConn
 	leaderClose chan bool
 
-	initFinish chan bool
+	initFinish chan struct{}
 	nextInit   bool
 	prevInit   bool
 	leaderInit bool
@@ -45,8 +45,8 @@ type chainControl struct {
 }*/
 
 // chan bool is used to signal that all initializations are done
-func newChainControl(initialLeader *pb.Node) (*chainControl, <-chan bool) {
-	done := make(chan bool, 0)
+func newChainControl(initialLeader *pb.Node) (*chainControl, <-chan struct{}) {
+	done := make(chan struct{})
 	this := &chainControl{leaderClose: make(chan bool, 0), initFinish: done}
 	this.leaderChanged(initialLeader)
 	return this, done
@@ -70,6 +70,7 @@ func (c *chainControl) prevGetter() func() pb.ReplicationProviderClient {
 
 // received from leader node
 func (c *chainControl) NextChanged(ctx context.Context, next *pb.Node) (*emptypb.Empty, error) {
+	//wasTail := c.next == nil
 	c.mtx.Lock()
 	defer c.mtx.Unlock()
 	if next.Address == "" {
@@ -159,7 +160,6 @@ func (c *chainControl) triggerInitDone() {
 	c.mtx.RLock()
 	defer c.mtx.RUnlock()
 	if c.nextInit && c.prevInit && c.leaderInit {
-		c.initFinish <- true
 		close(c.initFinish)
 	}
 }

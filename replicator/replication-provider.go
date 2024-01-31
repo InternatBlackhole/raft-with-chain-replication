@@ -57,7 +57,7 @@ func (r *replicatorNode) PutInternal(ctx context.Context, in *rpc.InternalEntry)
 			_, err = prev.Commit(context.Background(), &rpc.EntryCommited{Key: in.Key, Version: in.Version})
 			//panic("prev is nil, figure it out, are you running on one node?")
 		}
-		fmt.Printf("Stored commited value %s for key %s, version %s\n", in.Value, in.Key, in.Version)
+		fmt.Printf("Stored commited value %s for key %s, version %d\n", in.Value, in.Key, in.Version)
 	} else {
 		// i am not a tail node, send Put to next
 		// and also save uncommited value

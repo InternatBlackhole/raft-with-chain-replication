@@ -9,6 +9,7 @@ import "google/protobuf/wrappers.proto";
 message Node {
     string address = 1;
     uint32 port = 2;
+    optional string id = 3;
 }
 
 message Entry {
@@ -54,7 +55,9 @@ service Controller {
     // Gets the port of the current controller receiving heartbeat
     rpc GetHeartbeatEndpoint(google.protobuf.Empty) returns (google.protobuf.UInt32Value);
     // Register into the chain, triggers NextChanged and PrevChanged events
-    rpc Register(Node) returns (google.protobuf.Empty);
+    rpc RegisterAsReplicator(Node) returns (google.protobuf.Empty);
+    // Register into the controller cluster with id, will only succed on leader
+    rpc RegisterAsController(Node) returns (google.protobuf.Empty);
 }
 
 service PutProvider {

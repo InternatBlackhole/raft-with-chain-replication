@@ -57,7 +57,7 @@ func serverMain(controllerHostname string, myPort int, meId int) {
 	errPanic(err)
 	chainControl.mtx.RLock()
 	//register also reports next and prev node info
-	_, err = chainControl.leader.Register(context.Background(), &pb.Node{Address: hostname, Port: uint32(myPort)})
+	_, err = chainControl.leader.RegisterAsReplicator(context.Background(), &pb.Node{Address: hostname, Port: uint32(myPort)})
 	if err != nil {
 		errors.Join(errors.New("could not register with controller"), err)
 	}
