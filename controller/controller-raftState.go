@@ -1,49 +1,76 @@
-package controller
+package main
 
 import (
-	"container/list"
+	"fmt"
 	"io"
 	"strings"
 	"sync"
 
 	"github.com/hashicorp/raft"
+	"google.golang.org/protobuf/proto"
+	"timkr.si/ps-izziv/controller/rpc"
 )
 
 // contains the chain layout
+// TODO: change the state so that it holds alo the id
 type raftState struct {
-	mtx   sync.RWMutex
-	chain list.List //list of "hostname:port"
+	mtx sync.RWMutex
+	//chain list.List //list of replicationNodes
+	//should it be a pointer?
+	chain replicationChain
 
-	nodeAdded   func(string) //accepts hostname:port
-	nodeRemoved func(string) //accepts hostname:port
+	//nodeAdded   func(replicationNode)
+	//nodeRemoved func(replicationNode)
 }
 
 type LogType string
 
 const (
-	NodeAdd    LogType = "add"
-	NodeRemove LogType = "remove"
+	NodeAdd    LogType = "timkr.si/add"
+	NodeRemove LogType = "timkr.si/remove"
 )
+
+func newRaftState() *raftState {
+	return &raftState{chain: *newReplicationChain()}
+}
 
 func (r *raftState) Apply(l *raft.Log) interface{} {
 	ext := LogType(l.Extensions)
-	data := string(l.Data)
+
+	var data *rpc.Node
+	if ext == NodeAdd || ext == NodeRemove {
+		data = &rpc.Node{}
+		err := proto.Unmarshal(l.Data, data)
+		if err != nil {
+			fmt.Println("Error unmarshalling data: ", err)
+			return err
+		}
+	} else {
+		fmt.Println("Unknown log type: ", ext)
+		return nil
+	}
 
 	r.mtx.Lock()
 	defer r.mtx.Unlock()
+	node := newReplicationNode(data.Address, int(data.Port), *data.Id)
 
 	switch ext {
 	case NodeAdd:
-		r.chain.PushBack(data)
-		go r.nodeAdded(data)
+		prev := r.chain.AddNode(node)
+		return []*replicationNode{prev, node, nil}
+		//go r.nodeAdded(data)
+		//fmt.Println("Added node: ", data)
 	case NodeRemove:
-		for val := r.chain.Front(); val != nil; val = val.Next() {
+		/*for val := r.chain.Front(); val != nil; val = val.Next() {
 			if val.Value.(string) == data {
 				r.chain.Remove(val)
 				go r.nodeRemoved(data)
+				fmt.Println("Removed node: ", data)
 				break
 			}
-		}
+		}*/
+		prev, next := r.chain.RemoveNode(node)
+		return []*replicationNode{prev, node, next}
 	}
 	return nil
 }
@@ -52,35 +79,38 @@ func (r *raftState) Snapshot() (raft.FSMSnapshot, error) {
 	r.mtx.RLock()
 	defer r.mtx.RUnlock()
 	//this should copy the chain
-	return &stateSnapshot{chain: r.chain}, nil
+	return &stateSnapshot{chain: r.chain.ToSlice()}, nil
 }
 
 func (r *raftState) Restore(rc io.ReadCloser) error {
-	r.mtx.Lock()
-	defer r.mtx.Unlock()
+	//locks not needed in restore, no other goroutines should be running in r
+	//r.mtx.Lock()
+	//defer r.mtx.Unlock()
+	r.chain = *newReplicationChain()
 	b, err := io.ReadAll(rc)
 	if err != nil {
 		return err
 	}
 	replicators := strings.Split(string(b), "\n")
 	for _, replicator := range replicators {
-		/*node, err := deserializeReplicationNode(replicator)
+		node, err := deserializeReplicationNode(replicator)
 		if err != nil {
 			return err
-		}*/
-		r.chain.PushBack(replicator)
+		}
+		r.chain.AddNode(node)
 	}
 	return nil
 }
 
 type stateSnapshot struct {
-	chain list.List
+	//chain list.List
+	chain []replicationNode
 }
 
 func (s *stateSnapshot) Persist(sink raft.SnapshotSink) error {
 	//no need to lock, this is a copy
-	for val := s.chain.Front(); val != nil; val = val.Next() {
-		sink.Write([]byte(val.Value.(string)))
+	for _, v := range s.chain {
+		sink.Write([]byte(v.String() + "\n"))
 	}
 	sink.Close()
 	return nil

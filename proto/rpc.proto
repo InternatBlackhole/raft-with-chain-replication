@@ -1,7 +1,7 @@
 syntax = "proto3";
 
 package rpc;
-option go_package= "/rpc";
+option go_package="/rpc";
 
 import "google/protobuf/empty.proto";
 import "google/protobuf/wrappers.proto";
@@ -56,8 +56,8 @@ service Controller {
     rpc GetHeartbeatEndpoint(google.protobuf.Empty) returns (google.protobuf.UInt32Value);
     // Register into the chain, triggers NextChanged and PrevChanged events
     rpc RegisterAsReplicator(Node) returns (google.protobuf.Empty);
-    // Register into the controller cluster with id, will only succed on leader
-    rpc RegisterAsController(Node) returns (google.protobuf.Empty);
+    // Register into the controller cluster with id, will only succeed on leader, return the index of the node in the cluster
+    rpc RegisterAsController(Node) returns (google.protobuf.UInt64Value);
 }
 
 service PutProvider {

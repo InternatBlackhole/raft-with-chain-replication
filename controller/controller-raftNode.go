@@ -1,4 +1,4 @@
-package controller
+package main
 
 import (
 	"context"
@@ -8,15 +8,18 @@ import (
 	"strconv"
 	"sync"
 	"time"
-	pb "tkNaloga04/rpc"
+
+	pb "timkr.si/ps-izziv/controller/rpc"
 
 	"github.com/hashicorp/raft"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 type controllerNode struct {
-	emtx     sync.RWMutex //ends mutex
+	sync.RWMutex
+	//emtx     sync.RWMutex //ends mutex
 	headHost replicationNode
 	tailHost replicationNode
 
@@ -25,13 +28,13 @@ type controllerNode struct {
 	state *raftState
 	raft  *raft.Raft
 
-	cmtx  sync.RWMutex //chain mutex
-	chain replicationChain
+	//cmtx  sync.RWMutex //chain mutex
+	//chain replicationChain
 
 	pb.UnimplementedControllerServer
 }
 
-func genCallback(f func(*replicationNode)) func(string) {
+/*func genCallback(f func(*replicationNode)) func(string) {
 	return func(addr string) {
 		node, err := getNodeFromHostname(addr)
 		if err != nil {
@@ -39,15 +42,15 @@ func genCallback(f func(*replicationNode)) func(string) {
 		}
 		f(newReplicationNode(node.Address, int(node.Port)))
 	}
-}
+}*/
 
 func newControllerNode(hbPort int, raft *raft.Raft, state *raftState) *controllerNode {
 	if state == nil {
 		panic("state is nil")
 	}
 	this := &controllerNode{hbPort: hbPort, raft: raft, state: state}
-	state.nodeAdded = genCallback(this.replNodeAdded)
-	state.nodeRemoved = genCallback(this.replNodeRemoved)
+	//state.nodeAdded = genCallback(this.replNodeAdded)
+	//state.nodeRemoved = genCallback(this.replNodeRemoved)
 	return this
 }
 
@@ -60,18 +63,18 @@ func (c *controllerNode) GetLeader(ctx context.Context, in *emptypb.Empty) (*pb.
 }
 
 func (c *controllerNode) GetHead(ctx context.Context, in *emptypb.Empty) (*pb.Node, error) {
-	c.emtx.RLock()
-	defer c.emtx.RUnlock()
+	c.RLock()
+	defer c.RUnlock()
 	return c.headHost.ToNode(), nil
 }
 
 func (c *controllerNode) GetTail(ctx context.Context, in *emptypb.Empty) (*pb.Node, error) {
-	c.emtx.RLock()
-	defer c.emtx.RUnlock()
+	c.RLock()
+	defer c.RUnlock()
 	return c.tailHost.ToNode(), nil
 }
 
-func (c *controllerNode) GetHeartbeatPort(ctx context.Context, in *emptypb.Empty) (*wrapperspb.UInt32Value, error) {
+func (c *controllerNode) GetHeartbeatEndpoint(ctx context.Context, in *emptypb.Empty) (*wrapperspb.UInt32Value, error) {
 	if c.raft.State() != raft.Leader {
 		return nil, errors.New("not leader")
 	}
@@ -83,27 +86,50 @@ func (c *controllerNode) RegisterAsReplicator(ctx context.Context, in *pb.Node) 
 		return nil, errors.New("not leader")
 	}
 
+	if in.Id == nil || *in.Id == "" {
+		return nil, errors.New("node id not set")
+	}
+
+	c.Lock()
+	defer c.Unlock()
+
+	data, err := proto.Marshal(in)
+	if err != nil {
+		fmt.Println("Error marshalling node: ", err)
+		return nil, err
+	}
+
 	//also add to extensions
-	log := raft.Log{Data: []byte(in.Address + ":" + strconv.Itoa(int(in.Port))), Extensions: []byte(NodeAdd)}
+	log := raft.Log{Data: data, Extensions: []byte(NodeAdd)}
 	af := c.raft.ApplyLog(log, 1*time.Second)
-	err := af.Error()
+	err, ret := af.Error(), af.Response()
 	if err != nil {
 		fmt.Println("Error applying log: ", err)
-		return &emptypb.Empty{}, errors.New("error occured")
+		return nil, errors.New("error occured")
 	}
+	if err, ok := ret.(error); ok {
+		fmt.Println("Error applying log: ", err)
+		return nil, errors.New("error occured")
+	}
+	//ret is a [3]*replicactionNode of prev, current, next nodes
+	if arr, ok := ret.([]*replicationNode); ok {
+		c.replNodeAdded(arr[0], arr[1], arr[2])
+	} else {
+		fmt.Println("Unknown return type: ", ret)
+		return nil, errors.New("error occured")
+	}
+	fmt.Println("Added replicator: ", in.Address, ":", in.Port, " with id: ", *in.Id)
 	return &emptypb.Empty{}, nil
 }
 
-func (c *controllerNode) RegisterAsController(ctx context.Context, in *pb.Node) (*emptypb.Empty, error) {
+func (c *controllerNode) RegisterAsController(ctx context.Context, in *pb.Node) (*wrapperspb.UInt64Value, error) {
+	//return nil, errors.New("not implemented")
 	if c.raft.State() != raft.Leader {
 		return nil, errors.New("not leader")
 	}
 
-	if in.Id == nil {
+	if in.Id == nil || *in.Id == "" {
 		return nil, errors.New("node id not set")
-	}
-	if *in.Id == "" {
-		return nil, errors.New("node id invalid")
 	}
 
 	fu := c.raft.AddVoter(raft.ServerID(*in.Id), raft.ServerAddress(in.Address+":"+strconv.Itoa(int(in.Port))), 0, 1*time.Second)
@@ -112,7 +138,7 @@ func (c *controllerNode) RegisterAsController(ctx context.Context, in *pb.Node) 
 		fmt.Println("Error adding voter: ", err)
 		return nil, err
 	}
-	return &emptypb.Empty{}, nil
+	return &wrapperspb.UInt64Value{Value: fu.Index()}, nil
 }
 
 func (c *controllerNode) mustEmbedUnimplementedControllerServer() {
@@ -133,111 +159,139 @@ func getNodeFromHostname(host string) (*pb.Node, error) {
 	return &pb.Node{Address: host, Port: uint32(p)}, nil
 }
 
-// run when a replication node is added, always adds to the end of the chain
-func (c *controllerNode) replNodeAdded(node *replicationNode) {
-	c.cmtx.Lock()
-	prev := c.chain.AddNode(node)
-	defer c.cmtx.Unlock()
-	if prev == nil {
-		//there was no previous node
-		c.emtx.Lock()
-		c.headHost = *node
-		c.tailHost = *node
-		c.emtx.Unlock()
-		return
-	}
-	//there was a previous node
-	prevClient, err := prev.lazyDial()
-	if err != nil {
-		fmt.Println("Error dialing previous node: ", err)
-		return
-	}
-	nodeClient, err := node.lazyDial()
+// run when a replication node is added, always adds to the end of the chain (next should be nil)
+func (c *controllerNode) replNodeAdded(prev, current, next *replicationNode) {
+	//c.cmtx.Lock()
+	//defer c.cmtx.Unlock()
+
+	nodeClient, err := current.lazyDial()
 	if err != nil {
 		fmt.Println("Error dialing node: ", err)
 		return
 	}
 
-	_, err = prevClient.NextChanged(context.Background(), &pb.Node{Address: node.addr, Port: uint32(node.port)})
-	if err != nil {
-		fmt.Println("Error notifying previous node: ", err)
+	if prev == nil {
+		//there was no previous node
+		c.headHost = *current
+		c.tailHost = *current
+		ctx, cancel := ctxTimeout()
+		_, err = nodeClient.PrevChanged(ctx, &pb.Node{Address: "", Port: 0})
+		if err != nil {
+			fmt.Println("Error notifying node ", current.String(), ": ", err)
+		}
+		cancel()
+		ctx, cancel = ctxTimeout()
+		_, err = nodeClient.NextChanged(ctx, &pb.Node{Address: "", Port: 0})
+		if err != nil {
+			fmt.Println("Error notifying node ", current.String(), ": ", err)
+		}
+		cancel()
+		return
 	}
-
-	_, err = nodeClient.PrevChanged(context.Background(), &pb.Node{Address: prev.addr, Port: uint32(prev.port)})
+	//there was a previous node
+	prevClient, err := prev.lazyDial()
 	if err != nil {
-		fmt.Println("Error notifying node: ", err)
-	}
-	_, err = nodeClient.NextChanged(context.Background(), &pb.Node{Address: "", Port: 0})
-	if err != nil {
-		fmt.Println("Error notifying node: ", err)
-	}
-
-	c.emtx.Lock()
-	c.tailHost = *node
-	c.emtx.Unlock()
-}
-
-// run when a replication node is removed
-func (c *controllerNode) replNodeRemoved(node *replicationNode) {
-	c.cmtx.Lock()
-	defer c.cmtx.Unlock()
-	prev, next := c.chain.RemoveNode(node)
-	if prev == nil && next == nil {
-		//there was only one node, now there are none
+		fmt.Println("Error dialing previous node ", prev.String(), ": ", err)
 		return
 	}
 
-	c.emtx.Lock()
-	var nextClient, prevClient pb.ControllerEventsClient
-	var err error
+	ctx, cancel := ctxTimeout()
+	_, err = prevClient.NextChanged(ctx, &pb.Node{Address: current.addr, Port: uint32(current.port)})
+	if err != nil {
+		fmt.Println("Error notifying previous node ", prev.String(), ": ", err)
+	}
+	cancel()
 
-	if prev == nil {
-		//there was no previous node
+	ctx, cancel = ctxTimeout()
+	_, err = nodeClient.PrevChanged(ctx, &pb.Node{Address: prev.addr, Port: uint32(prev.port)})
+	if err != nil {
+		fmt.Println("Error notifying node ", current.String(), ": ", err)
+	}
+	cancel()
+
+	ctx, cancel = ctxTimeout()
+	_, err = nodeClient.NextChanged(ctx, &pb.Node{Address: "", Port: 0})
+	if err != nil {
+		fmt.Println("Error notifying node ", current.String(), ": ", err)
+	}
+	cancel()
+
+	c.tailHost = *current
+}
+
+func ctxTimeout() (context.Context, context.CancelFunc) {
+	//TODO: change timeout to 1 second
+	return context.WithTimeout(context.Background(), 100*time.Second)
+}
+
+// run when a replication node is removed
+func (c *controllerNode) replNodeRemoved(prev, removed, next *replicationNode) {
+	//TODO: i think this is buggy
+	//c.cmtx.Lock()
+	//defer c.cmtx.Unlock()
+
+	if prev == nil && next == nil {
+		//there was only one node, now there are none, reset head and tail
+		c.headHost = replicationNode{}
+		c.tailHost = replicationNode{}
+		return
+	} else if prev == nil && next != nil {
+		//there was no previous node, and it was not the last node
+		//become head
 		c.headHost = *next
-		//message just next node
-		nextClient, err = next.lazyDial()
+		nextClient, err := next.lazyDial()
 		if err != nil {
-			fmt.Println("Error dialing next node: ", err)
+			fmt.Println("Error dialing next node ", next.String(), ": ", err)
 		}
-		_, err = nextClient.PrevChanged(context.Background(), &pb.Node{Address: "", Port: 0})
-		if err != nil {
-			fmt.Println("Error notifying next node: ", err)
-		}
-	} else {
-		//there was a previous node
-		prevClient, err = prev.lazyDial()
-		if err != nil {
-			fmt.Println("Error dialing previous node: ", err)
-		}
-		_, err = prevClient.NextChanged(context.Background(), &pb.Node{Address: next.addr, Port: uint32(next.port)})
-		if err != nil {
-			fmt.Println("Error notifying previous node: ", err)
-		}
-	}
 
-	if next == nil {
-		//there was no next node
+		ctx, cancel := ctxTimeout()
+		_, err = nextClient.PrevChanged(ctx, &pb.Node{Address: "", Port: 0})
+		if err != nil {
+			fmt.Println("Error notifying next node ", next.String(), ": ", err)
+		}
+		cancel()
+	} else if prev != nil && next == nil {
+		//there was no next node, and it was not the first node
+		//become tail
 		c.tailHost = *prev
-		//message just prev node
-		prevClient, err = prev.lazyDial()
+		prevClient, err := prev.lazyDial()
 		if err != nil {
-			fmt.Println("Error dialing previous node: ", err)
+			fmt.Println("Error dialing previous node ", prev.String(), ": ", err)
 		}
-		_, err = prevClient.NextChanged(context.Background(), &pb.Node{Address: "", Port: 0})
+
+		ctx, cancel := ctxTimeout()
+		_, err = prevClient.NextChanged(ctx, &pb.Node{Address: "", Port: 0})
 		if err != nil {
-			fmt.Println("Error notifying previous node: ", err)
+			fmt.Println("Error notifying previous node ", prev.String(), ": ", err)
 		}
+		cancel()
 	} else {
-		//there was a next node
-		nextClient, err = next.lazyDial()
+		//middle node
+		//contact both
+		prevClient, err := prev.lazyDial()
 		if err != nil {
-			fmt.Println("Error dialing next node: ", err)
+			fmt.Println("Error dialing previous node ", prev.String(), ": ", err)
 		}
-		_, err = nextClient.PrevChanged(context.Background(), &pb.Node{Address: prev.addr, Port: uint32(prev.port)})
+
+		ctx, cancel := ctxTimeout()
+		_, err = prevClient.NextChanged(ctx, &pb.Node{Address: next.addr, Port: uint32(next.port)})
 		if err != nil {
-			fmt.Println("Error notifying next node: ", err)
+			fmt.Println("Error notifying previous node ", prev.String(), ": ", err)
 		}
+		cancel()
+
+		nextClient, err := next.lazyDial()
+		if err != nil {
+			fmt.Println("Error dialing next node ", next.String(), ": ", err)
+		}
+
+		ctx, cancel = ctxTimeout()
+		_, err = nextClient.PrevChanged(ctx, &pb.Node{Address: prev.addr, Port: uint32(prev.port)})
+		if err != nil {
+			fmt.Println("Error notifying next node ", next.String(), ": ", err)
+		}
+		cancel()
 	}
 
-	c.emtx.Unlock()
+	//c.emtx.Unlock()
 }

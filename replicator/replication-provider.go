@@ -1,11 +1,13 @@
-package replicator
+package main
 
 import (
 	"context"
 	"fmt"
 	"os"
 	"strconv"
-	"tkNaloga04/rpc"
+	"time"
+
+	"timkr.si/ps-izziv/replicator/rpc"
 
 	"sync"
 
@@ -49,15 +51,20 @@ func (r *replicatorNode) PutInternal(ctx context.Context, in *rpc.InternalEntry)
 	val, existed := r.storage.LoadOrStore(in.Key, newEntry(in))
 	if next == nil {
 		// i am a tail node
-		//r.storage.Store(in.Key, newEntry(in))
+		r.storage.Store(in.Key, newEntry(in))
+		fmt.Printf("Stored commited value %s for key %s, version %d\n", in.Value, in.Key, in.Version)
 		//start commit process
 		prev := r.prev()
 		//check if i am the only node
 		if prev != nil {
-			_, err = prev.Commit(context.Background(), &rpc.EntryCommited{Key: in.Key, Version: in.Version})
+			ctx, cancel := ctxTimeout()
+			_, err = prev.Commit(ctx, &rpc.EntryCommited{Key: in.Key, Version: in.Version})
+			if err != nil {
+				fmt.Println("Error in commit: ", err)
+			}
+			cancel()
 			//panic("prev is nil, figure it out, are you running on one node?")
 		}
-		fmt.Printf("Stored commited value %s for key %s, version %d\n", in.Value, in.Key, in.Version)
 	} else {
 		// i am not a tail node, send Put to next
 		// and also save uncommited value
@@ -70,10 +77,15 @@ func (r *replicatorNode) PutInternal(ctx context.Context, in *rpc.InternalEntry)
 		}
 		// already stored in LoadOrStore
 		/*else {
-			//err = errors.New("no key " + in.Key + " found")
-			r.storage.Store(in.Key, newEntry(in))
+		//err = errors.New("no key " + in.Key + " found")
+		r.storage.Store(in.Key, newEntry(in))
 		}*/
-		_, err = next.PutInternal(context.Background(), in)
+		ctx, cancel := ctxTimeout()
+		_, err = next.PutInternal(ctx, in)
+		if err != nil {
+			fmt.Println("Error in PutInternal: ", err)
+		}
+		cancel()
 		fmt.Printf("Stored uncommited value %s for key %s\n", in.Value, in.Key)
 	}
 	if err != nil {
@@ -91,6 +103,8 @@ func (r *replicatorNode) Commit(ctx context.Context, in *rpc.EntryCommited) (*em
 		//return &emptypb.Empty{}, errors.New(myerr("key not found"))
 		panic(errors.New("key not found, should not happen in Commit"))
 	}
+	//TODO: remove this artifical delay
+	time.Sleep(500 * time.Millisecond)
 	v := val.(entry)
 	v.commitedVersion = in.Version
 	r.storage.Store(in.Key, v)
@@ -102,7 +116,12 @@ func (r *replicatorNode) Commit(ctx context.Context, in *rpc.EntryCommited) (*em
 	prev := r.prev()
 	if prev != nil {
 		//i am not a head node
-		_, err = prev.Commit(context.Background(), in)
+		ctx, cancel := ctxTimeout()
+		_, err = prev.Commit(ctx, in)
+		if err != nil {
+			fmt.Println("Error in Commit: ", err)
+		}
+		cancel()
 	}
 	//i am a head node, do nothing
 	return &emptypb.Empty{}, err

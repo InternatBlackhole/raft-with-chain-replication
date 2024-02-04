@@ -1,10 +1,11 @@
-package client
+package main
 
 import (
 	"context"
 	"fmt"
 	"time"
-	pb "tkNaloga04/rpc"
+
+	pb "timkr.si/ps-izziv/client/rpc"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -22,7 +23,7 @@ func main() {
 	var err error
 	for {
 		var cmd string
-		fmt.Scanln(&cmd)
+		fmt.Scan(&cmd)
 		switch cmd {
 		case "put":
 			if head == nil {
@@ -86,7 +87,7 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Print(
+	fmt.Println(
 		"Usage:\n\tch <hostname:port> - connect to head node\n\tcn <hostname:port> - connect to node for reading" +
 			"\n\tput <key> <value>\n\tget <key>\n\tquit - exit the program")
 }

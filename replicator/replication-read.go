@@ -1,10 +1,11 @@
-package replicator
+package main
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"tkNaloga04/rpc"
+
+	"timkr.si/ps-izziv/replicator/rpc"
 
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )

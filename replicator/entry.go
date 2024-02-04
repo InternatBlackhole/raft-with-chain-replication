@@ -1,7 +1,7 @@
-package replicator
+package main
 
 import (
-	"tkNaloga04/rpc"
+	"timkr.si/ps-izziv/replicator/rpc"
 )
 
 type entry struct {

@@ -1,24 +1,28 @@
 CC=go build
-GOOS=linux
-GOARCH=amd64
-MODULE=tkNaloga04
+export GOOS=linux
+export GOARCH=amd64
+#export GOPATH=$(GOPATH):$(PWD)/timkr.si
 CFLAGS=
 
-$(shell mkdir -p $(PWD)/bin)
-
-PACKAGES=client replicator controller
-TARGETS=$(addprefix ./bin/,$(PACKAGES))
-
-.PHONY: clean, proto, $(TARGETS)
+.PHONY: clean
 	
-all: $(TARGETS)
+all: clientExe controllerExe replicatorExe
 
 clean:
-	-rm -rf ./bin/*
-	-rm -f ./rpc/*.pb.go
+	-rm -f clientExe controllerExe replicatorExe
+	-$(shell find . -name "*.pb.go" -type f -delete)
 
-proto: proto/*.proto
-	protoc --go_out=$(PWD) --go-grpc_out=$(PWD) $^
+replicatorExe: proto/*.proto replicator/*.go
+	protoc --go_out=replicator/ --go-grpc_out=replicator/ $(filter %.proto,$^)
+	$(CC) -C replicator -o ../$@
 
-$(TARGETS): proto
-	-$(CC) -o $@ $(MODULE)/$(notdir $@)
+controllerExe: proto/*.proto controller/*.go
+	protoc --go_out=controller/ --go-grpc_out=controller/ $(filter %.proto,$^)
+	$(CC) -C controller -o ../$@
+
+clientExe: proto/*.proto client/*.go
+	protoc --go_out=client/ --go-grpc_out=client/ $(filter %.proto,$^)
+	$(CC) -C client -o ../$@
+
+raftadminCli: raftadmin/cmd/raftadmin/raftadmin.go
+	$(CC) -C raftadmin/cmd/raftadmin -o $(PWD)/$@

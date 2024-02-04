@@ -1,0 +1,17 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "client"
+		},
+		{
+			"path": "controller"
+		},
+		{
+			"path": "replicator"
+		}
+	],
+	"settings": {}
+}

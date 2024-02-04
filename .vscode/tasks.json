@@ -1,0 +1,21 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Delete raft0",
+            "command": "rm",
+            "type": "shell",
+            "args": [
+                "-rf",
+                "${workspaceFolder}/dbg/raft0/*"
+            ],
+            "problemMatcher": [
+                "$tsc"
+            ],
+            "presentation": {
+                "reveal": "never"
+            },
+            "group": "build"
+        }
+    ]
+}

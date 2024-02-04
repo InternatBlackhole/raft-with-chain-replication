@@ -1,4 +1,4 @@
-package replicator
+package main
 
 import (
 	"sync"

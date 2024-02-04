@@ -1,4 +1,4 @@
-package replicator
+package main
 
 import (
 	"context"
@@ -10,23 +10,73 @@ import (
 	"os/signal"
 	"strconv"
 	"syscall"
-	pb "tkNaloga04/rpc"
+	"time"
+
+	pb "timkr.si/ps-izziv/replicator/rpc"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
-var chain *chainControl
+var (
+	controllerHostname string
+	myPort             int
+	meId               string
+)
 
-func serverMain(controllerHostname string, myPort int, meId int) {
+func errPanic(err error) {
+	if err != nil {
+		panic(err)
+	}
+}
+
+func getControllerNode(hostname string) pb.ControllerClient {
+	conn, err := grpc.Dial(hostname, grpcDialOptions(true)...)
+	errPanic(err)
+	return pb.NewControllerClient(conn)
+}
+
+func main() {
+	hostname := flag.String("controller", "", "controller hostname:port combination")
+	myport := flag.Int("port", 0, "port to listen on")
+	id := flag.String("meId", "", "my id")
+
+	flag.Parse()
+
+	if *hostname == "" {
+		panic("controller hostname not set")
+	}
+
+	if *myport == 0 {
+		panic("port not set")
+	}
+
+	if *id == "" {
+		panic("meId not set")
+	}
+
+	fmt.Printf("Starting node %s on port %d\n", *id, *myport)
+
+	host, err := "localhost", error(nil) //os.Hostname()
+	errPanic(err)
+	fmt.Printf("%s:%d\n", host, *myport)
+
+	controllerHostname = *hostname
+	myPort = *myport
+	meId = *id
+
 	// Connect to the controller node to get leader info
 	ctrl := getControllerNode(controllerHostname)
 
-	leaderNode, err := ctrl.GetLeader(context.Background(), &emptypb.Empty{})
+	ctx, cancel := ctxTimeout()
+	leaderNode, err := ctrl.GetLeader(ctx, &emptypb.Empty{})
+	cancel()
 	if err != nil {
 		panic(errors.Join(errors.New("could not get leader info from controller"), err))
 	}
+
+	fmt.Println("Leader info received from controller: ", leaderNode)
 
 	chainControl, initDone := newChainControl(leaderNode)
 
@@ -45,25 +95,33 @@ func serverMain(controllerHostname string, myPort int, meId int) {
 	lst, err := net.Listen("tcp", ":"+strconv.Itoa(myPort))
 	errPanic(err)
 
-	err = s.Serve(lst)
-	if err != nil {
-		//fatal error on Serve
-		panic(err)
-	}
-	fmt.Printf("Node %d started on port %d\n", meId+1, myPort)
+	ready := make(chan struct{})
 
+	go func() {
+		fmt.Println("Serving on port ", myPort)
+		close(ready)
+		err = s.Serve(lst)
+		if err != nil {
+			//fatal error on Serve
+			panic(err)
+		}
+	}()
+
+	fmt.Printf("Node %s started on port %d\n", meId, myPort)
+
+	<-ready
 	fmt.Println("Registering with controller...")
-	hostname, err := os.Hostname()
-	errPanic(err)
 	chainControl.mtx.RLock()
 	//register also reports next and prev node info
-	_, err = chainControl.leader.RegisterAsReplicator(context.Background(), &pb.Node{Address: hostname, Port: uint32(myPort)})
+	ctx, cancel = ctxTimeout()
+	_, err = chainControl.RegisterAsReplicator(ctx, &pb.Node{Address: host, Port: uint32(myPort), Id: &meId})
 	if err != nil {
-		errors.Join(errors.New("could not register with controller"), err)
+		fmt.Println("could not register with controller: ", err)
 	}
+	cancel()
 	chainControl.mtx.RUnlock()
 
-	fmt.Println("Waiting for chain info from controller...")
+	fmt.Println("Waiting for chain info from controller... (waiting for initDone)")
 	<-initDone
 	fmt.Println("Chain info received from controller")
 	fmt.Println("Replicator node running")
@@ -77,54 +135,22 @@ func serverMain(controllerHostname string, myPort int, meId int) {
 			fmt.Println("Interrupted, exiting...")
 			os.Exit(0)
 		}
+		if s == syscall.SIGIO || s == syscall.SIGURG {
+			continue
+		}
 		fmt.Println("Got signal:", s)
 	}
 }
 
-func errPanic(err error) {
-	if err != nil {
-		panic(err)
+func grpcDialOptions(nobuffer bool) []grpc.DialOption {
+	arr := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
+	if nobuffer {
+		//arr = append(arr, grpc.WithWriteBufferSize(0), grpc.WithReadBufferSize(0))
 	}
+	return arr
 }
 
-func getControllerNode(hostname string) pb.ControllerClient {
-	conn, err := grpc.Dial(hostname, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	errPanic(err)
-	return pb.NewControllerClient(conn)
-}
-
-func writeMyConnectInfo(meId int, myPort int) {
-	file, err := os.Create("connectInfo_" + strconv.Itoa(meId) + ".txt")
-	errPanic(err)
-	defer file.Close()
-
-	host, err := os.Hostname()
-	errPanic(err)
-
-	str := fmt.Sprintf("%s:%d\n", host, myPort)
-	file.WriteString(str)
-}
-
-func main() {
-	hostname := flag.String("controller", "", "controller hostname:port combination")
-	myport := flag.Int("port", 0, "port to listen on")
-	id := flag.Int("meId", -1, "my id")
-
-	flag.Parse()
-
-	if *hostname == "" {
-		panic("controller hostname not set")
-	}
-
-	if *myport == 0 {
-		panic("port not set")
-	}
-
-	if *id <= -1 {
-		panic("meId not set")
-	}
-
-	fmt.Printf("Starting node %d on port %d\n", *id, *myport)
-	writeMyConnectInfo(*id, *myport)
-	serverMain(*hostname, *myport, *id)
+func ctxTimeout() (context.Context, context.CancelFunc) {
+	//TODO: change timeout to 1 second
+	return context.WithTimeout(context.Background(), 100*time.Second)
 }

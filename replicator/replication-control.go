@@ -1,4 +1,4 @@
-package replicator
+package main
 
 import (
 	"context"
@@ -6,12 +6,13 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
-	pb "tkNaloga04/rpc"
+
+	pb "timkr.si/ps-izziv/replicator/rpc"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
@@ -28,7 +29,7 @@ type chainControl struct {
 	prev pb.ReplicationProviderClient
 
 	//leader controllerInfo
-	leader      pb.ControllerClient
+	pb.ControllerClient
 	leaderHb    *net.UDPConn
 	leaderClose chan bool
 
@@ -47,7 +48,7 @@ type chainControl struct {
 // chan bool is used to signal that all initializations are done
 func newChainControl(initialLeader *pb.Node) (*chainControl, <-chan struct{}) {
 	done := make(chan struct{})
-	this := &chainControl{leaderClose: make(chan bool, 0), initFinish: done}
+	this := &chainControl{leaderClose: make(chan bool), initFinish: done}
 	this.leaderChanged(initialLeader)
 	return this, done
 }
@@ -106,9 +107,9 @@ func (c *chainControl) LeaderChanged(ctx context.Context, leader *pb.Node) (*emp
 }
 
 func getNode(hostname string) pb.ReplicationProviderClient {
-	conn, err := grpc.Dial(hostname, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.Dial(hostname, grpcDialOptions(false)...)
 	if err != nil {
-		panic(errors.Join(errors.New("could not connect to node"), err))
+		panic(errors.Join(errors.New("could not connect to node "), err))
 	}
 	return pb.NewReplicationProviderClient(conn)
 }
@@ -128,52 +129,65 @@ func (c *chainControl) leaderChanged(newLeader *pb.Node) {
 	}
 
 	// Connect to the leader node
-	c.leader = getControllerNode(newLeader.Address + ":" + strconv.Itoa(int(newLeader.Port)))
+	c.ControllerClient = getControllerNode(newLeader.Address + ":" + strconv.Itoa(int(newLeader.Port)))
 
-	hbPortV, err := c.leader.GetHeartbeatEndpoint(context.Background(), &emptypb.Empty{})
+	ctx, _ := ctxTimeout()
+	hbPortV, err := c.GetHeartbeatEndpoint(ctx, &emptypb.Empty{})
 	if err != nil {
-		panic(errors.Join(errors.New("could not get heartbeat port from controller"), err))
+		panic(errors.Join(errors.New("could not get heartbeat port from controller "), err))
 	}
 	hbPort := hbPortV.Value
+	fmt.Println("Leader heartbeat port: ", hbPort)
 
 	// Start heartbeat
 	hbAddr, err := net.ResolveUDPAddr("udp", newLeader.Address+":"+strconv.Itoa(int(hbPort)))
 	if err != nil {
-		panic(errors.Join(errors.New("could not resolve heartbeat endpoint"), err))
+		panic(errors.Join(errors.New("could not resolve heartbeat endpoint "), err))
 	}
 	hbConn, err := net.DialUDP("udp", nil, hbAddr)
 	if err != nil {
-		panic(errors.Join(errors.New("could not connect to heartbeat endpoint"), err))
+		panic(errors.Join(errors.New("could not connect to heartbeat endpoint "), err))
 	}
 	c.leaderHb = hbConn
 
 	//TODO: more stuff needs to happen
 	fmt.Println("Leader changed to: ", newLeader.Address, ":", newLeader.Port)
 
-	go c.heartbeat()
+	go c.heartbeat(meId)
 
 	c.leaderInit = true
 	c.triggerInitDone()
 }
 
 func (c *chainControl) triggerInitDone() {
-	c.mtx.RLock()
-	defer c.mtx.RUnlock()
-	if c.nextInit && c.prevInit && c.leaderInit {
+	if c.nextInit && c.prevInit && c.leaderInit && c.initFinish != nil {
 		close(c.initFinish)
+		c.initFinish = nil
 	}
 }
 
-func (c *chainControl) heartbeat() {
+func (c *chainControl) heartbeat(id string) {
+	fmt.Println("Starting heartbeat")
+	beats := 0
 	for {
 		c.mtx.RLock()
-		_, err := c.leaderHb.Write([]byte("heartbeat"))
+		c.leaderHb.SetWriteDeadline(time.Now().Add(10 * time.Millisecond))
+		_, err := c.leaderHb.Write([]byte(id))
 		if err != nil {
+			if strings.Contains(err.Error(), "timeout") {
+				c.mtx.RUnlock()
+				continue
+			}
 			fmt.Println("Heartbeat failed. Error: ", err)
 			c.leaderHb = nil
+			c.mtx.RUnlock()
 			return
 		}
 		c.mtx.RUnlock()
+		beats++
+		if beats%100 == 0 {
+			fmt.Println("100 Heartbeats sent")
+		}
 		select {
 		case val := <-c.leaderClose:
 			if val {
