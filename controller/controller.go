@@ -329,7 +329,7 @@ func myLeadershipObserver(rft *raft.Raft, sock *net.UDPConn) {
 			}
 			this.state.mtx.RLock()
 			for val := this.state.chain.Front(); val != nil; val = val.Next() {
-				node := val.Value.(*replicationNode)
+				node := val.Value
 				conn, err := node.lazyDial()
 				if err != nil {
 					fmt.Println("Error connecting to node: ", err)

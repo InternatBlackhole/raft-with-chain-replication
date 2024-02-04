@@ -2,25 +2,78 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
+	"net"
+	"strconv"
 	"time"
 
 	pb "timkr.si/ps-izziv/client/rpc"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 var (
-	head pb.PutProviderClient
-	read pb.ReadProviderClient
+	head     pb.PutProviderClient
+	read     pb.ReadProviderClient
+	ctrlAddr string
 )
 
+func init() {
+	flag.StringVar(&ctrlAddr, "controller", "", "controller hostname:port combination")
+}
+
+func timeoutCtx() (context.Context, context.CancelFunc) {
+	//TODO: change timeout to 1 seconds
+	return context.WithTimeout(context.Background(), 100*time.Second)
+}
+
 func main() {
+	flag.Parse()
+
+	if ctrlAddr == "" {
+		panic("controller hostname not set")
+	}
 	printUsage()
-	//ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-	var err error
+
+	conn, err := grpc.Dial(ctrlAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		panic(err)
+	}
+	defer conn.Close()
+	controller := pb.NewControllerClient(conn)
+
+	ctx, cancel := timeoutCtx()
+	h, err := controller.GetHead(ctx, &emptypb.Empty{})
+	cancel()
+	if err != nil {
+		panic(err)
+	}
+	p := strconv.Itoa(int(h.Port))
+	addr := net.JoinHostPort(h.Address, p)
+	fmt.Println("Connected to head node: ", addr)
+	head, err = getPutProvider(addr)
+	if err != nil {
+		panic(err)
+	}
+
+	ctx, cancel = timeoutCtx()
+	r, err := controller.GetTail(ctx, &emptypb.Empty{})
+	cancel()
+	if err != nil {
+		panic(err)
+	}
+	p = strconv.Itoa(int(r.Port))
+	addr = net.JoinHostPort(r.Address, p)
+	fmt.Println("Connected to read node: ", addr)
+	read, err = getReadProvider(addr)
+	if err != nil {
+		panic(err)
+	}
+
 	for {
 		var cmd string
 		fmt.Scan(&cmd)
@@ -32,9 +85,9 @@ func main() {
 			}
 			var key, value string
 			fmt.Scanln(&key, &value)
-			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-			defer cancel()
+			ctx, cancel := timeoutCtx()
 			_, err := head.Put(ctx, &pb.Entry{Key: key, Value: value})
+			cancel()
 			if err != nil {
 				fmt.Println("Error: ", err)
 				continue
@@ -46,9 +99,9 @@ func main() {
 			}
 			var key string
 			fmt.Scanln(&key)
-			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-			defer cancel()
+			ctx, cancel := timeoutCtx()
 			ent, err := read.Get(ctx, &wrapperspb.StringValue{Value: key})
+			cancel()
 			if err != nil {
 				fmt.Println("Error: ", err)
 				continue

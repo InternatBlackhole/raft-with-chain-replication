@@ -1,7 +1,6 @@
 package main
 
 import (
-	"container/list"
 	"net"
 	"strconv"
 	"strings"
@@ -15,7 +14,7 @@ import (
 type replicationNode struct {
 	addr string
 	port int
-	conn rpc.ControllerEventsClient
+	conn grpc.ClientConnInterface
 	id   string
 }
 
@@ -38,14 +37,14 @@ func newReplicationNode(addr string, port int, id string) *replicationNode {
 
 func (r *replicationNode) lazyDial() (rpc.ControllerEventsClient, error) {
 	if r.conn == nil {
-		events, err := grpc.Dial(r.addr+":"+strconv.Itoa(r.port), grpcDialOptions(true)...)
+		conn, err := grpc.Dial(r.addr+":"+strconv.Itoa(r.port), grpcDialOptions(true)...)
 		if err != nil {
 			return nil, err
 		}
 		//i hope this copies correctly
-		r.conn = rpc.NewControllerEventsClient(events)
+		r.conn = conn
 	}
-	return r.conn, nil
+	return rpc.NewControllerEventsClient(r.conn), nil
 }
 
 func (r *replicationNode) String() string {
@@ -65,33 +64,35 @@ func (r *replicationNode) Copy() *replicationNode {
 
 type replicationChain struct {
 	sync.RWMutex
-	list.List
+	list
+	//list.List
 	//idCache map[string]*replicationNode
 }
 
 func newReplicationChain() *replicationChain {
-	return &replicationChain{List: *list.New() /*, idCache: make(map[string]*replicationNode)*/}
+	//return &replicationChain{List: *list.New() /*, idCache: make(map[string]*replicationNode)*/}
+	return &replicationChain{list: *newList()}
 }
 
 // AddNode adds a node to the chain and returns the previous last node, nil if there was none
 func (r *replicationChain) AddNode(node *replicationNode) *replicationNode {
 	r.Lock()
 	defer r.Unlock()
-	//r.idCache[node.id] = node
 
-	r.PushBack(nil)
-	r.Back().Value = node
-	//r.PushBack(node)
+	//r.PushBack(nil)
+	//r.Back().Value = node
+	r.PushBack(node)
 	if r.Len() <= 1 {
 		return nil
 	}
-	//r.PrintChain()
-	back := r.Back()
-	val, ok := back.Value.(*replicationNode)
-	if !ok {
+	back := r.Back().Prev()
+	val := back.Value
+	return val
+	/*r.list = append(r.list, node)
+	if len(r.list) <= 1 {
 		return nil
 	}
-	return val
+	return r.list[len(r.list)-2]*/
 }
 
 // RemoveNode removes a node from the chain and returns the neighbouring nodes (prev, next), nil if there isn't one
@@ -108,15 +109,22 @@ func (r *replicationChain) RemoveNode(node *replicationNode) (*replicationNode, 
 		if val.Value == nil {
 			continue
 		}
-		if val.Value.(*replicationNode) == node {
-			prev = val.Prev().Value.(*replicationNode)
-			next = val.Next().Value.(*replicationNode)
+		if val.Value == node {
+			prev = val.Prev().Value
+			next = val.Next().Value
 			r.Remove(val)
 			break
 		}
 	}
-	//delete(r.idCache, node.id)
 	return prev, next
+
+	/*if len(r.list) <= 1 {
+		return nil, nil
+	}
+
+	slices.DeleteFunc(r.list, func(i *replicationNode) bool {
+		return i.id == node.id
+	})*/
 }
 
 func (r *replicationChain) ContainsId(id string) bool {
@@ -127,7 +135,7 @@ func (r *replicationChain) ContainsId(id string) bool {
 	defer r.RUnlock()
 
 	for val := r.Front(); val != nil; val = val.Next() {
-		cast := val.Value.(*replicationNode)
+		cast := val.Value
 		if cast.id == id {
 			return true
 		}
@@ -144,7 +152,7 @@ func (r *replicationChain) GetNodeById(id string) *replicationNode {
 	defer r.RUnlock()
 
 	for val := r.Front(); val != nil; val = val.Next() {
-		cast := val.Value.(*replicationNode)
+		cast := val.Value
 		if cast.id == id {
 			return cast
 		}
@@ -158,7 +166,7 @@ func (r *replicationChain) ToSlice() []replicationNode {
 
 	arr := make([]replicationNode, r.Len())
 	for val, i := r.Front(), 0; val != nil; val, i = val.Next(), i+1 {
-		arr[i] = *val.Value.(*replicationNode).Copy()
+		arr[i] = *val.Value.Copy()
 	}
 	return arr
 }

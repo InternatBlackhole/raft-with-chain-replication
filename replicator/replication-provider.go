@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 	"strconv"
 	"time"
 
@@ -38,7 +37,7 @@ type replicatorNode struct {
 }
 
 func myerr(err string) string {
-	return ("Error: " + err + "from node " + strconv.Itoa(os.Getpid()))
+	return ("Error: " + err + " from node " + strconv.Itoa(myPort))
 }
 
 func NewReplicatorNode(prev NextReplicator, next NextReplicator) *replicatorNode {
@@ -49,6 +48,7 @@ func (r *replicatorNode) PutInternal(ctx context.Context, in *rpc.InternalEntry)
 	var err error = nil
 	next := r.next()
 	val, existed := r.storage.LoadOrStore(in.Key, newEntry(in))
+	fmt.Printf("Stored uncommited value %s for key %s\n", in.Value, in.Key)
 	if next == nil {
 		// i am a tail node
 		r.storage.Store(in.Key, newEntry(in))
@@ -68,7 +68,6 @@ func (r *replicatorNode) PutInternal(ctx context.Context, in *rpc.InternalEntry)
 	} else {
 		// i am not a tail node, send Put to next
 		// and also save uncommited value
-		//val, ok := r.storage.Load(in.Key)
 		if existed {
 			//does this create a copy?
 			val := val.(entry)
@@ -76,17 +75,12 @@ func (r *replicatorNode) PutInternal(ctx context.Context, in *rpc.InternalEntry)
 			r.storage.Store(in.Key, val)
 		}
 		// already stored in LoadOrStore
-		/*else {
-		//err = errors.New("no key " + in.Key + " found")
-		r.storage.Store(in.Key, newEntry(in))
-		}*/
 		ctx, cancel := ctxTimeout()
 		_, err = next.PutInternal(ctx, in)
 		if err != nil {
 			fmt.Println("Error in PutInternal: ", err)
 		}
 		cancel()
-		fmt.Printf("Stored uncommited value %s for key %s\n", in.Value, in.Key)
 	}
 	if err != nil {
 		panic(err)
@@ -104,7 +98,7 @@ func (r *replicatorNode) Commit(ctx context.Context, in *rpc.EntryCommited) (*em
 		panic(errors.New("key not found, should not happen in Commit"))
 	}
 	//TODO: remove this artifical delay
-	time.Sleep(500 * time.Millisecond)
+	time.Sleep(5000 * time.Millisecond)
 	v := val.(entry)
 	v.commitedVersion = in.Version
 	r.storage.Store(in.Key, v)

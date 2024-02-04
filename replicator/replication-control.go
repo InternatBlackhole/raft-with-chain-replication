@@ -25,8 +25,8 @@ import (
 
 type chainControl struct {
 	mtx  sync.RWMutex
-	next pb.ReplicationProviderClient
-	prev pb.ReplicationProviderClient
+	next *grpc.ClientConn
+	prev *grpc.ClientConn
 
 	//leader controllerInfo
 	pb.ControllerClient
@@ -57,7 +57,10 @@ func (c *chainControl) nextGetter() func() pb.ReplicationProviderClient {
 	return func() pb.ReplicationProviderClient {
 		c.mtx.RLock()
 		defer c.mtx.RUnlock()
-		return c.next
+		if c.next == nil {
+			return nil
+		}
+		return pb.NewReplicationProviderClient(c.next)
 	}
 }
 
@@ -65,7 +68,10 @@ func (c *chainControl) prevGetter() func() pb.ReplicationProviderClient {
 	return func() pb.ReplicationProviderClient {
 		c.mtx.RLock()
 		defer c.mtx.RUnlock()
-		return c.prev
+		if c.prev == nil {
+			return nil
+		}
+		return pb.NewReplicationProviderClient(c.prev)
 	}
 }
 
@@ -74,6 +80,9 @@ func (c *chainControl) NextChanged(ctx context.Context, next *pb.Node) (*emptypb
 	//wasTail := c.next == nil
 	c.mtx.Lock()
 	defer c.mtx.Unlock()
+	if c.next != nil {
+		c.next.Close()
+	}
 	if next.Address == "" {
 		c.next = nil
 	} else {
@@ -89,6 +98,9 @@ func (c *chainControl) NextChanged(ctx context.Context, next *pb.Node) (*emptypb
 func (c *chainControl) PrevChanged(ctx context.Context, prev *pb.Node) (*emptypb.Empty, error) {
 	c.mtx.Lock()
 	defer c.mtx.Unlock()
+	if c.prev != nil {
+		c.prev.Close()
+	}
 	if prev.Address == "" {
 		c.prev = nil
 	} else {
@@ -106,12 +118,12 @@ func (c *chainControl) LeaderChanged(ctx context.Context, leader *pb.Node) (*emp
 	return &emptypb.Empty{}, nil
 }
 
-func getNode(hostname string) pb.ReplicationProviderClient {
+func getNode(hostname string) *grpc.ClientConn {
 	conn, err := grpc.Dial(hostname, grpcDialOptions(false)...)
 	if err != nil {
 		panic(errors.Join(errors.New("could not connect to node "), err))
 	}
-	return pb.NewReplicationProviderClient(conn)
+	return conn
 }
 
 func (c *chainControl) leaderChanged(newLeader *pb.Node) {
@@ -168,7 +180,7 @@ func (c *chainControl) triggerInitDone() {
 
 func (c *chainControl) heartbeat(id string) {
 	fmt.Println("Starting heartbeat")
-	beats := 0
+	//beats := 0
 	for {
 		c.mtx.RLock()
 		c.leaderHb.SetWriteDeadline(time.Now().Add(10 * time.Millisecond))
@@ -184,10 +196,10 @@ func (c *chainControl) heartbeat(id string) {
 			return
 		}
 		c.mtx.RUnlock()
-		beats++
+		/*beats++
 		if beats%100 == 0 {
 			fmt.Println("100 Heartbeats sent")
-		}
+		}*/
 		select {
 		case val := <-c.leaderClose:
 			if val {
