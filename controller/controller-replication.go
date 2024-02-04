@@ -53,6 +53,9 @@ func (r *replicationNode) String() string {
 }
 
 func (r *replicationNode) ToNode() *rpc.Node {
+	if r == nil {
+		return &rpc.Node{}
+	}
 	return &rpc.Node{Address: r.addr, Port: uint32(r.port), Id: &r.id}
 }
 

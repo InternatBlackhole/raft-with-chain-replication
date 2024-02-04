@@ -31,6 +31,11 @@ message EntryCommited {
     uint32 version = 3;
 }
 
+message Neighbors {
+    Node prev = 1;
+    Node next = 2;
+}
+
 service ReplicationProvider {
     rpc PutInternal(InternalEntry) returns (google.protobuf.Empty);
     rpc Commit(EntryCommited) returns (google.protobuf.Empty);
@@ -55,7 +60,7 @@ service Controller {
     // Gets the port of the current controller receiving heartbeat
     rpc GetHeartbeatEndpoint(google.protobuf.Empty) returns (google.protobuf.UInt32Value);
     // Register into the chain, triggers NextChanged and PrevChanged events
-    rpc RegisterAsReplicator(Node) returns (google.protobuf.Empty);
+    rpc RegisterAsReplicator(Node) returns (Neighbors);
     // Register into the controller cluster with id, will only succeed on leader, return the index of the node in the cluster
     rpc RegisterAsController(Node) returns (google.protobuf.UInt64Value);
 }

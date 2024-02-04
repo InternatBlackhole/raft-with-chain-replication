@@ -24,13 +24,15 @@ startControllers () {
     rm -r outs/*
 
     howMany=${1:-3}
-    #hosts=()
-    #for x in $(seq 1 $howMany); do
-    #    myPort=$(( 20000 + $x - 1 ))
-    #    hosts+=("localhost:$myPort;id$x")
-    #done
+    hosts=()
+    for x in $(seq 1 $howMany); do
+        myPort=$(( 20000 + $x - 1 ))
+        hosts+=("localhost:$myPort;id$x")
+    done
     mkdir -p "outs/cont00/"
-    ./controllerExe -addr "localhost:20000" -raftDataDir "outs/cont00/" -raftId 1 -rb >"outs/cont00.txt" 2>&1 &
+    #set -o xtrace
+    ./controllerExe -addr "localhost:20000" -raftDataDir "outs/cont00/" -raftId 1 -rb -cl "$(join_by , ${hosts[@]})" >"outs/cont00.txt" 2>&1 &
+    #set +o xtrace
     if [ $howMany -eq 1 ]; then
         return
     fi

@@ -114,7 +114,7 @@ func main() {
 func grpcDialOptions(nobuffer bool) []grpc.DialOption {
 	arr := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
 	if nobuffer {
-		//arr = append(arr, grpc.WithWriteBufferSize(0), grpc.WithReadBufferSize(0))
+		arr = append(arr, grpc.WithWriteBufferSize(0), grpc.WithReadBufferSize(1024))
 	}
 	return arr
 }
@@ -151,42 +151,45 @@ func createCluster(ctx context.Context, id, address string, state raft.FSM) (*ra
 		panic(err)
 	}
 
-	//if raftBootstrap {
-	split := strings.Split(raftJoin, ",")
-	servers := make([]raft.Server, 0, len(split))
-	for i, s := range split {
-		if !strings.Contains(s, ";") {
-			panic("Invalid server id")
+	if raftBootstrap {
+		/*split := strings.Split(raftJoin, ",")
+		servers := make([]raft.Server, 0, len(split))
+		for i, s := range split {
+			if !strings.Contains(s, ";") {
+				panic("Invalid server id")
+			}
+			split2 := strings.Split(s, ";")
+			if len(split2) != 2 {
+				panic("Invalid server id format, should be <hostname:port;id>")
+			}
+			servers = append(servers, raft.Server{
+				Suffrage: raft.Voter,
+				ID:       raft.ServerID(split2[1]),
+				Address:  raft.ServerAddress(split2[0]),
+			})
+			fmt.Println("Added server: ", servers[i])
 		}
-		split2 := strings.Split(s, ";")
-		if len(split2) != 2 {
-			panic("Invalid server id format, should be <hostname:port;id>")
-		}
-		if split2[0] == address && split2[1] == id {
-			continue
-		}
-		servers[i] = raft.Server{
+		servers = append(servers, raft.Server{
 			Suffrage: raft.Voter,
-			ID:       raft.ServerID(split2[1]),
-			Address:  raft.ServerAddress(split2[0]),
-		}
-		fmt.Println("Added server: ", servers[i])
-	}
-	servers = append(servers, raft.Server{
-		Suffrage: raft.Voter,
-		ID:       raft.ServerID(id),
-		Address:  raft.ServerAddress(address),
-	})
+			ID:       raft.ServerID(id),
+			Address:  raft.ServerAddress(address),
+		})*/
 
-	cfg := raft.Configuration{
-		Servers: servers,
-	}
-	fu := r.BootstrapCluster(cfg)
-	if err = fu.Error(); err != nil {
-		fmt.Println("(ignoring) Error bootstrapping cluster: ", err)
-		//panic(err)
-	}
-	/*} else {
+		cfg := raft.Configuration{
+			Servers: []raft.Server{
+				{
+					Suffrage: raft.Voter,
+					ID:       raft.ServerID(id),
+					Address:  raft.ServerAddress(address),
+				},
+			},
+		}
+		fu := r.BootstrapCluster(cfg)
+		if err = fu.Error(); err != nil {
+			fmt.Println("(ignoring) Error bootstrapping cluster: ", err)
+			//panic(err)
+		}
+	} else {
 		if raftJoin == "" {
 			return nil, nil, fmt.Errorf("no leader to join")
 		}
@@ -201,7 +204,7 @@ func createCluster(ctx context.Context, id, address string, state raft.FSM) (*ra
 			panic(err)
 		}
 
-		ctx, cancel := context.WithTimeout(ctx, 1*time.Second)
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		_, err = leader.RegisterAsController(ctx, &rpc.Node{Address: address, Port: uint32(p), Id: &id})
 		if err != nil {
 			panic(err)
@@ -209,7 +212,7 @@ func createCluster(ctx context.Context, id, address string, state raft.FSM) (*ra
 		cancel()
 
 		fmt.Println("Joined cluster")
-	}*/
+	}
 
 	fmt.Println("Bootstrapped cluster")
 	return r, trans, nil

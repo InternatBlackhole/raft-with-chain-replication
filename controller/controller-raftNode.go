@@ -81,10 +81,12 @@ func (c *controllerNode) GetHeartbeatEndpoint(ctx context.Context, in *emptypb.E
 	return &wrapperspb.UInt32Value{Value: uint32(c.hbPort)}, nil
 }
 
-func (c *controllerNode) RegisterAsReplicator(ctx context.Context, in *pb.Node) (*emptypb.Empty, error) {
+func (c *controllerNode) RegisterAsReplicator(ctx context.Context, in *pb.Node) (*pb.Neighbors, error) {
 	if c.raft.State() != raft.Leader {
 		return nil, errors.New("not leader")
 	}
+
+	fmt.Println("Registering replicator: ", in.Address, ":", in.Port, " with id: ", *in.Id)
 
 	if in.Id == nil || *in.Id == "" {
 		return nil, errors.New("node id not set")
@@ -113,13 +115,17 @@ func (c *controllerNode) RegisterAsReplicator(ctx context.Context, in *pb.Node) 
 	}
 	//ret is a [3]*replicactionNode of prev, current, next nodes
 	if arr, ok := ret.([]*replicationNode); ok {
-		c.replNodeAdded(arr[0], arr[1], arr[2])
+		fmt.Println("Added replicator: ", in.Address, ":", in.Port, " with id: ", *in.Id)
+		n, e := c.replNodeAdded(arr[0], arr[1], arr[2])
+		if n == nil {
+			fmt.Println("Error adding replicator: ", e)
+		}
+		return n, e
 	} else {
 		fmt.Println("Unknown return type: ", ret)
 		return nil, errors.New("error occured")
 	}
-	fmt.Println("Added replicator: ", in.Address, ":", in.Port, " with id: ", *in.Id)
-	return &emptypb.Empty{}, nil
+	//return &emptypb.Empty{}, nil
 }
 
 func (c *controllerNode) RegisterAsController(ctx context.Context, in *pb.Node) (*wrapperspb.UInt64Value, error) {
@@ -160,21 +166,20 @@ func getNodeFromHostname(host string) (*pb.Node, error) {
 }
 
 // run when a replication node is added, always adds to the end of the chain (next should be nil)
-func (c *controllerNode) replNodeAdded(prev, current, next *replicationNode) {
-	//c.cmtx.Lock()
-	//defer c.cmtx.Unlock()
+func (c *controllerNode) replNodeAdded(prev, current, next *replicationNode) (*pb.Neighbors, error) {
+	//next should always be nil
 
-	nodeClient, err := current.lazyDial()
+	/*nodeClient, err := current.lazyDial()
 	if err != nil {
 		fmt.Println("Error dialing node: ", err)
-		return
-	}
+		return nil, err
+	}*/
 
 	if prev == nil {
 		//there was no previous node
 		c.headHost = *current
 		c.tailHost = *current
-		ctx, cancel := ctxTimeout()
+		/*ctx, cancel := ctxTimeout()
 		_, err = nodeClient.PrevChanged(ctx, &pb.Node{Address: "", Port: 0})
 		if err != nil {
 			fmt.Println("Error notifying node ", current.String(), ": ", err)
@@ -185,25 +190,30 @@ func (c *controllerNode) replNodeAdded(prev, current, next *replicationNode) {
 		if err != nil {
 			fmt.Println("Error notifying node ", current.String(), ": ", err)
 		}
-		cancel()
-		return
+		cancel()*/
+		return &pb.Neighbors{Prev: prev.ToNode(), Next: &pb.Node{}}, nil
 	}
+
+	//prevNode := prev.ToNode()
+	//nextNode := next.ToNode()
+	currentNode := current.ToNode()
+
 	//there was a previous node
 	prevClient, err := prev.lazyDial()
 	if err != nil {
 		fmt.Println("Error dialing previous node ", prev.String(), ": ", err)
-		return
+		return nil, err
 	}
 
 	ctx, cancel := ctxTimeout()
-	_, err = prevClient.NextChanged(ctx, &pb.Node{Address: current.addr, Port: uint32(current.port)})
+	_, err = prevClient.NextChanged(ctx, currentNode)
 	if err != nil {
-		fmt.Println("Error notifying previous node ", prev.String(), ": ", err)
+		fmt.Println("Error notifying next node ", prev.String(), ": ", err)
 	}
 	cancel()
 
-	ctx, cancel = ctxTimeout()
-	_, err = nodeClient.PrevChanged(ctx, &pb.Node{Address: prev.addr, Port: uint32(prev.port)})
+	/*ctx, cancel = ctxTimeout()
+	_, err = nodeClient.PrevChanged(ctx, prevNode)
 	if err != nil {
 		fmt.Println("Error notifying node ", current.String(), ": ", err)
 	}
@@ -214,14 +224,16 @@ func (c *controllerNode) replNodeAdded(prev, current, next *replicationNode) {
 	if err != nil {
 		fmt.Println("Error notifying node ", current.String(), ": ", err)
 	}
-	cancel()
+	cancel()*/
 
 	c.tailHost = *current
+
+	return &pb.Neighbors{Prev: prev.ToNode(), Next: &pb.Node{}}, nil
 }
 
 func ctxTimeout() (context.Context, context.CancelFunc) {
 	//TODO: change timeout to 1 second
-	return context.WithTimeout(context.Background(), 100*time.Second)
+	return context.WithTimeout(context.Background(), 5*time.Second)
 }
 
 // run when a replication node is removed

@@ -81,21 +81,11 @@ func main() {
 	chainControl, initDone := newChainControl(leaderNode)
 
 	s := grpc.NewServer()
-
-	// Registration of the replication provider
-	node := NewReplicatorNode(chainControl.prevGetter(), chainControl.nextGetter())
-	pb.RegisterReplicationProviderServer(s, node)
-	pb.RegisterPutProviderServer(s, node)
-	pb.RegisterReadProviderServer(s, node)
-
-	pb.RegisterControllerEventsServer(s, chainControl)
-	fmt.Println("Registered Servers")
+	ready := make(chan struct{})
 
 	//listen on all addresses
 	lst, err := net.Listen("tcp", ":"+strconv.Itoa(myPort))
 	errPanic(err)
-
-	ready := make(chan struct{})
 
 	go func() {
 		fmt.Println("Serving on port ", myPort)
@@ -107,6 +97,15 @@ func main() {
 		}
 	}()
 
+	// Registration of the replication provider
+	node := NewReplicatorNode(chainControl.prevGetter(), chainControl.nextGetter())
+	pb.RegisterReplicationProviderServer(s, node)
+	pb.RegisterPutProviderServer(s, node)
+	pb.RegisterReadProviderServer(s, node)
+
+	pb.RegisterControllerEventsServer(s, chainControl)
+	fmt.Println("Registered Servers")
+
 	fmt.Printf("Node %s started on port %d\n", meId, myPort)
 
 	<-ready
@@ -114,11 +113,25 @@ func main() {
 	chainControl.mtx.RLock()
 	//register also reports next and prev node info
 	ctx, cancel = ctxTimeout()
-	_, err = chainControl.RegisterAsReplicator(ctx, &pb.Node{Address: host, Port: uint32(myPort), Id: &meId})
+	neighs, err := chainControl.RegisterAsReplicator(ctx, &pb.Node{Address: host, Port: uint32(myPort), Id: &meId})
 	if err != nil {
 		fmt.Println("could not register with controller: ", err)
 	}
 	cancel()
+
+	fmt.Println("Registered with controller")
+	if neighs.Prev != nil {
+		fmt.Println("Prev: ", neighs.Prev.Address, ":", neighs.Prev.Port)
+		chainControl.prev = getNode(net.JoinHostPort(neighs.Prev.Address, strconv.Itoa(int(neighs.Prev.Port))))
+	} else {
+		chainControl.prev = nil
+	}
+	if neighs.Next != nil {
+		fmt.Println("Next: ", neighs.Next.Address, ":", neighs.Next.Port)
+		chainControl.next = getNode(net.JoinHostPort(neighs.Next.Address, strconv.Itoa(int(neighs.Next.Port))))
+	} else {
+		chainControl.next = nil
+	}
 	chainControl.mtx.RUnlock()
 
 	fmt.Println("Waiting for chain info from controller... (waiting for initDone)")
@@ -145,12 +158,12 @@ func main() {
 func grpcDialOptions(nobuffer bool) []grpc.DialOption {
 	arr := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
 	if nobuffer {
-		//arr = append(arr, grpc.WithWriteBufferSize(0), grpc.WithReadBufferSize(0))
+		arr = append(arr, grpc.WithWriteBufferSize(0), grpc.WithReadBufferSize(1024))
 	}
 	return arr
 }
 
 func ctxTimeout() (context.Context, context.CancelFunc) {
 	//TODO: change timeout to 1 second
-	return context.WithTimeout(context.Background(), 100*time.Second)
+	return context.WithTimeout(context.Background(), 5*time.Second)
 }

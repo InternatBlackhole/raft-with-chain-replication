@@ -34,8 +34,8 @@ type chainControl struct {
 	leaderClose chan bool
 
 	initFinish chan struct{}
-	nextInit   bool
-	prevInit   bool
+	//nextInit   bool
+	//prevInit   bool
 	leaderInit bool
 
 	pb.UnimplementedControllerEventsServer
@@ -80,8 +80,8 @@ func (c *chainControl) NextChanged(ctx context.Context, next *pb.Node) (*emptypb
 		c.next = getNode(next.Address + ":" + strconv.Itoa(int(next.Port)))
 	}
 	fmt.Println("Next changed to: ", next.Address, ":", next.Port)
-	c.nextInit = true
-	c.triggerInitDone()
+	//c.nextInit = true
+	//c.triggerInitDone()
 	return &emptypb.Empty{}, nil
 }
 
@@ -95,8 +95,8 @@ func (c *chainControl) PrevChanged(ctx context.Context, prev *pb.Node) (*emptypb
 		c.prev = getNode(prev.Address + ":" + strconv.Itoa(int(prev.Port)))
 	}
 	fmt.Println("Prev changed to: ", prev.Address, ":", prev.Port)
-	c.prevInit = true
-	c.triggerInitDone()
+	/*c.prevInit = true
+	c.triggerInitDone()*/
 	return &emptypb.Empty{}, nil
 }
 
@@ -160,7 +160,7 @@ func (c *chainControl) leaderChanged(newLeader *pb.Node) {
 }
 
 func (c *chainControl) triggerInitDone() {
-	if c.nextInit && c.prevInit && c.leaderInit && c.initFinish != nil {
+	if /*c.nextInit && c.prevInit &&*/ c.leaderInit && c.initFinish != nil {
 		close(c.initFinish)
 		c.initFinish = nil
 	}
