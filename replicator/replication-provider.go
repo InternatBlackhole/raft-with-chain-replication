@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"strconv"
 	"time"
 
@@ -26,7 +27,7 @@ const (
 )*/
 
 type replicatorNode struct {
-	storage   sync.Map // perhaps make it a sync.Map
+	storage   *sync.Map // perhaps make it a sync.Map
 	prev      NextReplicator
 	next      NextReplicator
 	publisher *Agent
@@ -40,8 +41,8 @@ func myerr(err string) string {
 	return ("Error: " + err + " from node " + strconv.Itoa(myPort))
 }
 
-func NewReplicatorNode(prev NextReplicator, next NextReplicator) *replicatorNode {
-	return &replicatorNode{prev: prev, next: next, publisher: NewAgent()}
+func NewReplicatorNode(prev NextReplicator, next NextReplicator, storage *sync.Map) *replicatorNode {
+	return &replicatorNode{prev: prev, next: next, publisher: NewAgent(), storage: storage}
 }
 
 func (r *replicatorNode) PutInternal(ctx context.Context, in *rpc.InternalEntry) (*emptypb.Empty, error) {
@@ -72,6 +73,7 @@ func (r *replicatorNode) PutInternal(ctx context.Context, in *rpc.InternalEntry)
 			//does this create a copy?
 			val := val.(entry)
 			val.pendingVersion = in.Version
+			val.value = in.Value
 			r.storage.Store(in.Key, val)
 		}
 		// already stored in LoadOrStore
@@ -98,11 +100,11 @@ func (r *replicatorNode) Commit(ctx context.Context, in *rpc.EntryCommited) (*em
 		panic(errors.New("key not found, should not happen in Commit"))
 	}
 	//TODO: remove this artifical delay
-	time.Sleep(5000 * time.Millisecond)
+	time.Sleep(1000 * time.Millisecond)
 	v := val.(entry)
 	v.commitedVersion = in.Version
 	r.storage.Store(in.Key, v)
-	fmt.Printf("Commited value %s for key %s\n", v.value, in.Key)
+	fmt.Printf("Commited value %s for key %s, version %d\n", v.value, in.Key, in.Version)
 
 	go r.publisher.Publish(in.Key, entry{value: v.value, commitedVersion: in.Version, pendingVersion: v.pendingVersion, key: in.Key})
 
@@ -119,6 +121,24 @@ func (r *replicatorNode) Commit(ctx context.Context, in *rpc.EntryCommited) (*em
 	}
 	//i am a head node, do nothing
 	return &emptypb.Empty{}, err
+}
+
+func (r *replicatorNode) StreamEntries(stream rpc.ReplicationProvider_StreamEntriesServer) error {
+	for {
+		ent, err := stream.Recv()
+		if err == io.EOF {
+			//no more entries
+			fmt.Println("Storage synced")
+			return stream.SendAndClose(&emptypb.Empty{})
+		}
+		if ent == nil {
+			fmt.Println("Received nil entry")
+			return nil
+		}
+		e := newEntry(ent)
+		e.commitedVersion = ent.Version
+		r.storage.Store(ent.Key, e)
+	}
 }
 
 func (r *replicatorNode) mustEmbedUnimplementedReplicatorServer() {

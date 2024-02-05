@@ -34,9 +34,9 @@ type chainControl struct {
 	leaderClose chan bool
 
 	initFinish chan struct{}
-	//nextInit   bool
-	//prevInit   bool
 	leaderInit bool
+
+	storage *sync.Map
 
 	pb.UnimplementedControllerEventsServer
 }
@@ -46,9 +46,9 @@ type chainControl struct {
 }*/
 
 // chan bool is used to signal that all initializations are done
-func newChainControl(initialLeader *pb.Node) (*chainControl, <-chan struct{}) {
+func newChainControl(initialLeader *pb.Node, storage *sync.Map) (*chainControl, <-chan struct{}) {
 	done := make(chan struct{})
-	this := &chainControl{leaderClose: make(chan bool), initFinish: done}
+	this := &chainControl{leaderClose: make(chan bool), initFinish: done, storage: storage}
 	this.leaderChanged(initialLeader)
 	return this, done
 }
@@ -77,11 +77,12 @@ func (c *chainControl) prevGetter() func() pb.ReplicationProviderClient {
 
 // received from leader node
 func (c *chainControl) NextChanged(ctx context.Context, next *pb.Node) (*emptypb.Empty, error) {
-	//wasTail := c.next == nil
 	c.mtx.Lock()
 	defer c.mtx.Unlock()
+	wasTail := c.next == nil
 	if c.next != nil {
 		c.next.Close()
+		c.next = nil
 	}
 	if next.Address == "" {
 		c.next = nil
@@ -89,8 +90,39 @@ func (c *chainControl) NextChanged(ctx context.Context, next *pb.Node) (*emptypb
 		c.next = getNode(next.Address + ":" + strconv.Itoa(int(next.Port)))
 	}
 	fmt.Println("Next changed to: ", next.Address, ":", next.Port)
-	//c.nextInit = true
-	//c.triggerInitDone()
+
+	if wasTail {
+		fmt.Println("Sending storage to new next...")
+		go func() {
+			prov := pb.NewReplicationProviderClient(c.next)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			str, err := prov.StreamEntries(ctx)
+			if err != nil {
+				fmt.Println("Error streaming entries to new next: ", err)
+				cancel()
+				return
+			}
+			iserror := false
+			c.storage.Range(func(key, value interface{}) bool {
+				entry := value.(entry)
+				fmt.Println("Sending entry: ", key, ":", entry.value, ":", entry.pendingVersion)
+				err = str.Send(&pb.InternalEntry{Key: key.(string), Value: entry.value, Version: entry.pendingVersion})
+				iserror = err != nil
+				return !iserror
+			})
+			cancel()
+			if iserror {
+				fmt.Println("Error sending entries to new next: ", err)
+				return
+			}
+			err = str.CloseSend()
+			if err != nil {
+				fmt.Println("Error closing stream to new next: ", err)
+				return
+			}
+		}()
+	}
+
 	return &emptypb.Empty{}, nil
 }
 
@@ -171,6 +203,24 @@ func (c *chainControl) leaderChanged(newLeader *pb.Node) {
 	c.triggerInitDone()
 }
 
+// if there is no leader because maybe elections are going on, this will try call every half second for 5 seconds
+func (c *chainControl) GetLeader(ctx context.Context, in *emptypb.Empty) (*pb.Node, error) {
+	node, err := c.ControllerClient.GetLeader(ctx, in)
+	if err != nil {
+		for i := 0; strings.Contains(err.Error(), "elections ongoing") && i < 9; i++ {
+			time.Sleep(500 * time.Millisecond)
+			node, err := c.ControllerClient.GetLeader(ctx, in)
+			if err == nil {
+				return node, nil
+			}
+		}
+		if !strings.Contains(err.Error(), "elections ongoing") {
+			return nil, err
+		}
+	}
+	return node, nil
+}
+
 func (c *chainControl) triggerInitDone() {
 	if /*c.nextInit && c.prevInit &&*/ c.leaderInit && c.initFinish != nil {
 		close(c.initFinish)
@@ -190,9 +240,19 @@ func (c *chainControl) heartbeat(id string) {
 				c.mtx.RUnlock()
 				continue
 			}
+			//the leader died or something, get new leader
 			fmt.Println("Heartbeat failed. Error: ", err)
+			fmt.Println("Getting new leader...")
 			c.leaderHb = nil
 			c.mtx.RUnlock()
+			ctx, cancel := ctxTimeout()
+			newLeader, err := c.GetLeader(ctx, &emptypb.Empty{})
+			cancel()
+			if err != nil {
+				panic(err)
+			}
+			//will launch new heartbeat, this one quits
+			c.leaderChanged(newLeader)
 			return
 		}
 		c.mtx.RUnlock()

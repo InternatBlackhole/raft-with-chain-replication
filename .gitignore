@@ -1,5 +1,5 @@
 rpc
 bin
 outs/
-./*Exe
+*Exe
 raftadminCli

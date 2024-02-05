@@ -20,8 +20,8 @@ import (
 type controllerNode struct {
 	sync.RWMutex
 	//emtx     sync.RWMutex //ends mutex
-	headHost replicationNode
-	tailHost replicationNode
+	//headHost *replicationNode //!moved to state
+	//tailHost *replicationNode //!moved to state
 
 	hbPort int
 
@@ -49,29 +49,42 @@ func newControllerNode(hbPort int, raft *raft.Raft, state *raftState) *controlle
 		panic("state is nil")
 	}
 	this := &controllerNode{hbPort: hbPort, raft: raft, state: state}
-	//state.nodeAdded = genCallback(this.replNodeAdded)
-	//state.nodeRemoved = genCallback(this.replNodeRemoved)
 	return this
 }
 
 func (c *controllerNode) GetLeader(ctx context.Context, in *emptypb.Empty) (*pb.Node, error) {
+	if c.raft.State() == raft.Candidate {
+		return nil, errors.New("elections ongoing")
+	}
 	laddr, lid := c.raft.LeaderWithID()
 	if lid == "" {
-		return nil, errors.New("no leader, maybe elections are ongoing")
+		return nil, errors.New("no leader")
 	}
 	return getNodeFromHostname(string(laddr))
 }
 
 func (c *controllerNode) GetHead(ctx context.Context, in *emptypb.Empty) (*pb.Node, error) {
-	c.RLock()
-	defer c.RUnlock()
-	return c.headHost.ToNode(), nil
+	//c.RLock()
+	//defer c.RUnlock()
+	c.state.mtx.RLock()
+	defer c.state.mtx.RUnlock()
+	if c.state.head == nil {
+		return nil, nil
+	}
+	return c.state.head.ToNode(), nil
+	//return c.headHost.ToNode(), nil
 }
 
 func (c *controllerNode) GetTail(ctx context.Context, in *emptypb.Empty) (*pb.Node, error) {
-	c.RLock()
-	defer c.RUnlock()
-	return c.tailHost.ToNode(), nil
+	//c.RLock()
+	//defer c.RUnlock()
+	c.state.mtx.RLock()
+	defer c.state.mtx.RUnlock()
+	if c.state.tail == nil {
+		return nil, nil
+	}
+	return c.state.tail.ToNode(), nil
+	//return c.tailHost.ToNode(), nil
 }
 
 func (c *controllerNode) GetHeartbeatEndpoint(ctx context.Context, in *emptypb.Empty) (*wrapperspb.UInt32Value, error) {
@@ -165,37 +178,58 @@ func getNodeFromHostname(host string) (*pb.Node, error) {
 	return &pb.Node{Address: host, Port: uint32(p)}, nil
 }
 
+func (c *controllerNode) changeHead(newHead *replicationNode) {
+	//c.Lock()
+	//defer c.Unlock()
+	node := newHead.ToNode()
+	data, err := proto.Marshal(node)
+	if err != nil {
+		fmt.Println("Error marshalling node: ", err)
+		return
+	}
+	fu := c.raft.ApplyLog(raft.Log{Data: data, Extensions: []byte(HeadChaned)}, 2*time.Second)
+	if err := fu.Error(); err != nil {
+		fmt.Println("Error applying log: ", err)
+	}
+	_, ok := fu.Response().(*replicationNode)
+	if !ok {
+		fmt.Println("Unknown return type: ", fu.Response())
+		return
+	}
+	//c.headHost = newHead
+}
+
+func (c *controllerNode) changeTail(newTail *replicationNode) {
+	//c.Lock()
+	//defer c.Unlock()
+	node := newTail.ToNode()
+	data, err := proto.Marshal(node)
+	if err != nil {
+		fmt.Println("Error marshalling node: ", err)
+		return
+	}
+	fu := c.raft.ApplyLog(raft.Log{Data: data, Extensions: []byte(TailChaned)}, 2*time.Second)
+	if err := fu.Error(); err != nil {
+		fmt.Println("Error applying log: ", err)
+	}
+	_, ok := fu.Response().(*replicationNode)
+	if !ok {
+		fmt.Println("Unknown return type: ", fu.Response())
+		return
+	}
+	//c.tailHost = newTail
+}
+
 // run when a replication node is added, always adds to the end of the chain (next should be nil)
 func (c *controllerNode) replNodeAdded(prev, current, next *replicationNode) (*pb.Neighbors, error) {
 	//next should always be nil
 
-	/*nodeClient, err := current.lazyDial()
-	if err != nil {
-		fmt.Println("Error dialing node: ", err)
-		return nil, err
-	}*/
-
 	if prev == nil {
 		//there was no previous node
-		c.headHost = *current
-		c.tailHost = *current
-		/*ctx, cancel := ctxTimeout()
-		_, err = nodeClient.PrevChanged(ctx, &pb.Node{Address: "", Port: 0})
-		if err != nil {
-			fmt.Println("Error notifying node ", current.String(), ": ", err)
-		}
-		cancel()
-		ctx, cancel = ctxTimeout()
-		_, err = nodeClient.NextChanged(ctx, &pb.Node{Address: "", Port: 0})
-		if err != nil {
-			fmt.Println("Error notifying node ", current.String(), ": ", err)
-		}
-		cancel()*/
+		c.changeHead(current)
+		c.changeTail(current)
 		return &pb.Neighbors{Prev: prev.ToNode(), Next: &pb.Node{}}, nil
 	}
-
-	//prevNode := prev.ToNode()
-	//nextNode := next.ToNode()
 	currentNode := current.ToNode()
 
 	//there was a previous node
@@ -212,21 +246,7 @@ func (c *controllerNode) replNodeAdded(prev, current, next *replicationNode) (*p
 	}
 	cancel()
 
-	/*ctx, cancel = ctxTimeout()
-	_, err = nodeClient.PrevChanged(ctx, prevNode)
-	if err != nil {
-		fmt.Println("Error notifying node ", current.String(), ": ", err)
-	}
-	cancel()
-
-	ctx, cancel = ctxTimeout()
-	_, err = nodeClient.NextChanged(ctx, &pb.Node{Address: "", Port: 0})
-	if err != nil {
-		fmt.Println("Error notifying node ", current.String(), ": ", err)
-	}
-	cancel()*/
-
-	c.tailHost = *current
+	c.changeTail(current)
 
 	return &pb.Neighbors{Prev: prev.ToNode(), Next: &pb.Node{}}, nil
 }
@@ -244,13 +264,15 @@ func (c *controllerNode) replNodeRemoved(prev, removed, next *replicationNode) {
 
 	if prev == nil && next == nil {
 		//there was only one node, now there are none, reset head and tail
-		c.headHost = replicationNode{}
-		c.tailHost = replicationNode{}
+		fmt.Println("Case prev == nil && next == nil")
+		c.changeHead(nil)
+		c.changeTail(nil)
 		return
 	} else if prev == nil && next != nil {
 		//there was no previous node, and it was not the last node
 		//become head
-		c.headHost = *next
+		fmt.Println("Case prev == nil && next != nil")
+		c.changeHead(next)
 		nextClient, err := next.lazyDial()
 		if err != nil {
 			fmt.Println("Error dialing next node ", next.String(), ": ", err)
@@ -265,7 +287,8 @@ func (c *controllerNode) replNodeRemoved(prev, removed, next *replicationNode) {
 	} else if prev != nil && next == nil {
 		//there was no next node, and it was not the first node
 		//become tail
-		c.tailHost = *prev
+		fmt.Println("Case prev != nil && next == nil")
+		c.changeTail(prev)
 		prevClient, err := prev.lazyDial()
 		if err != nil {
 			fmt.Println("Error dialing previous node ", prev.String(), ": ", err)
@@ -280,6 +303,7 @@ func (c *controllerNode) replNodeRemoved(prev, removed, next *replicationNode) {
 	} else {
 		//middle node
 		//contact both
+		fmt.Println("Case prev != nil && next != nil")
 		prevClient, err := prev.lazyDial()
 		if err != nil {
 			fmt.Println("Error dialing previous node ", prev.String(), ": ", err)

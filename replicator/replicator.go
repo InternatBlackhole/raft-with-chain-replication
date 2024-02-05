@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -56,6 +57,8 @@ func main() {
 		panic("meId not set")
 	}
 
+	storage := new(sync.Map)
+
 	fmt.Printf("Starting node %s on port %d\n", *id, *myport)
 
 	host, err := "localhost", error(nil) //os.Hostname()
@@ -78,7 +81,7 @@ func main() {
 
 	fmt.Println("Leader info received from controller: ", leaderNode)
 
-	chainControl, initDone := newChainControl(leaderNode)
+	chainControl, initDone := newChainControl(leaderNode, storage)
 
 	s := grpc.NewServer()
 	ready := make(chan struct{})
@@ -98,7 +101,7 @@ func main() {
 	}()
 
 	// Registration of the replication provider
-	node := NewReplicatorNode(chainControl.prevGetter(), chainControl.nextGetter())
+	node := NewReplicatorNode(chainControl.prevGetter(), chainControl.nextGetter(), storage)
 	pb.RegisterReplicationProviderServer(s, node)
 	pb.RegisterPutProviderServer(s, node)
 	pb.RegisterReadProviderServer(s, node)
@@ -112,7 +115,7 @@ func main() {
 	fmt.Println("Registering with controller...")
 	//chainControl.mtx.RLock()
 	//register also reports next and prev node info
-	ctx, cancel = ctxTimeout()
+	ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
 	neighs, err := chainControl.RegisterAsReplicator(ctx, &pb.Node{Address: host, Port: uint32(myPort), Id: &meId})
 	if err != nil {
 		fmt.Println("could not register with controller: ", err)
@@ -123,10 +126,6 @@ func main() {
 	if neighs.Prev != nil && neighs.Prev.Address != "" {
 		fmt.Println("Prev: ", neighs.Prev.Address, ":", neighs.Prev.Port)
 		chainControl.prev = getNode(net.JoinHostPort(neighs.Prev.Address, strconv.Itoa(int(neighs.Prev.Port))))
-		/*_, err := chainControl.PrevChanged(context.Background(), neighs.Prev)
-		if err != nil {
-			fmt.Println("could not set prev node: ", err)
-		}*/
 	} else {
 		fmt.Println("No prev node")
 		chainControl.prev = nil
@@ -134,10 +133,6 @@ func main() {
 	if neighs.Next != nil && neighs.Next.Address != "" {
 		fmt.Println("Next: ", neighs.Next.Address, ":", neighs.Next.Port)
 		chainControl.next = getNode(net.JoinHostPort(neighs.Next.Address, strconv.Itoa(int(neighs.Next.Port))))
-		/*_, err := chainControl.NextChanged(context.Background(), neighs.Next)
-		if err != nil {
-			fmt.Println("could not set next node: ", err)
-		}*/
 	} else {
 		fmt.Println("No next node")
 		chainControl.next = nil
@@ -175,5 +170,5 @@ func grpcDialOptions(nobuffer bool) []grpc.DialOption {
 
 func ctxTimeout() (context.Context, context.CancelFunc) {
 	//TODO: change timeout to 1 second
-	return context.WithTimeout(context.Background(), 500*time.Second)
+	return context.WithTimeout(context.Background(), 10*time.Second)
 }

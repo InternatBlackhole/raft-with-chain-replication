@@ -48,6 +48,9 @@ func (r *replicationNode) lazyDial() (rpc.ControllerEventsClient, error) {
 }
 
 func (r *replicationNode) String() string {
+	if r == nil {
+		return ""
+	}
 	return r.addr + ":" + strconv.Itoa(r.port) + "|" + r.id
 }
 
@@ -96,7 +99,7 @@ func (r *replicationChain) AddNode(node *replicationNode) *replicationNode {
 }
 
 // RemoveNode removes a node from the chain and returns the neighbouring nodes (prev, next), nil if there isn't one
-func (r *replicationChain) RemoveNode(node *replicationNode) (*replicationNode, *replicationNode) {
+func (r *replicationChain) RemoveNode(node *replicationNode, fun func(*replicationNode) bool) (*replicationNode, *replicationNode) {
 	r.Lock()
 	defer r.Unlock()
 
@@ -109,9 +112,15 @@ func (r *replicationChain) RemoveNode(node *replicationNode) (*replicationNode, 
 		if val.Value == nil {
 			continue
 		}
-		if val.Value == node {
-			prev = val.Prev().Value
-			next = val.Next().Value
+		if fun(val.Value) {
+			if val.Prev() != nil {
+				prev = val.Prev().Value
+			}
+
+			if val.Next() != nil {
+				next = val.Next().Value
+			}
+
 			r.Remove(val)
 			break
 		}

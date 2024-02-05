@@ -33,10 +33,10 @@ var (
 	raftBootstrap bool
 	raftJoin      string
 	state         raftState
-	//leadershipEvents = make(chan raft.Observation, 3)
-	//observer         *raft.Observer
-	hbSock *net.UDPConn
-	mport  string
+	clusterEvents = make(chan raft.Observation, 3)
+	observer      *raft.Observer
+	hbSock        *net.UDPConn
+	mport         string
 )
 
 func init() {
@@ -56,13 +56,16 @@ func main() {
 		panic("raftId not set")
 	}
 
-	if /*!raftBootstrap &&*/ raftJoin == "" {
+	if !raftBootstrap && raftJoin == "" {
 		panic("enter address of nodes in cluster")
 	}
 
 	if raftDir == "" {
 		panic("raftDataDir not set")
 	}
+
+	//	fmt.Println("Waiting 100ms for other nodes to start")
+	//	time.Sleep(100 * time.Millisecond)
 
 	var err error
 	_, mport, err = net.SplitHostPort(myAddr)
@@ -91,9 +94,13 @@ func main() {
 		panic(err)
 	}
 
-	/*observer = raft.NewObserver(leadershipEvents, false, func(e *raft.Observation) bool {
-		return reflect.TypeOf(*e) == reflect.TypeOf(raft.LeaderObservation{})
-	})*/
+	observer = raft.NewObserver(clusterEvents, false, func(e *raft.Observation) bool {
+		_, ok1 := e.Data.(raft.LeaderObservation)
+		_, ok2 := e.Data.(raft.PeerObservation)
+		return ok1 || ok2
+	})
+	rft.RegisterObserver(observer)
+	go observerFunc()
 
 	this = newControllerNode(hbSock.LocalAddr().(*net.UDPAddr).Port, rft, &state)
 
@@ -102,7 +109,6 @@ func main() {
 	raftadmin.Register(s, rft)
 	fmt.Println("Registered servers")
 
-	//go leadershipObserver(leadershipEvents)
 	go myLeadershipObserver(rft, hbSock)
 
 	err = s.Serve(rpcSock)
@@ -163,13 +169,13 @@ func createCluster(ctx context.Context, id, address string, state raft.FSM) (*ra
 				panic("Invalid server id format, should be <hostname:port;id>")
 			}
 			servers = append(servers, raft.Server{
-				Suffrage: raft.Voter,
-				ID:       raft.ServerID(split2[1]),
-				Address:  raft.ServerAddress(split2[0]),
+				//Suffrage: raft.Staging,
+				ID:      raft.ServerID(split2[1]),
+				Address: raft.ServerAddress(split2[0]),
 			})
 			fmt.Println("Added server: ", servers[i])
 		}
-		servers = append(servers, raft.Server{
+		/*servers = append(servers, raft.Server{
 			Suffrage: raft.Voter,
 			ID:       raft.ServerID(id),
 			Address:  raft.ServerAddress(address),
@@ -193,21 +199,29 @@ func createCluster(ctx context.Context, id, address string, state raft.FSM) (*ra
 		if raftJoin == "" {
 			return nil, nil, fmt.Errorf("no leader to join")
 		}
-		conn, err := grpc.Dial(raftJoin, grpcDialOptions(true)...)
+		split := strings.Split(raftJoin, ",")
+		l := strings.Split(split[0], ";")
+		conn, err := grpc.Dial(l[0], grpcDialOptions(true)...)
 		if err != nil {
 			panic(err)
 		}
 		leader := rpc.NewControllerClient(conn)
 
-		p, err := strconv.Atoi(mport)
+		host, port, err := net.SplitHostPort(address)
 		if err != nil {
 			panic(err)
 		}
 
-		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		_, err = leader.RegisterAsController(ctx, &rpc.Node{Address: address, Port: uint32(p), Id: &id})
+		p, err := strconv.Atoi(port)
 		if err != nil {
 			panic(err)
+		}
+
+		ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		_, err = leader.RegisterAsController(ctx, &rpc.Node{Address: host, Port: uint32(p), Id: &id})
+		if err != nil {
+			//panic(err)
+			fmt.Println("Error registering as controller: ", err)
 		}
 		cancel()
 
@@ -240,6 +254,12 @@ func deathReporter(node *replicationNode) {
 	if err := fu.Error(); err != nil {
 		fmt.Println("Error applying log: ", err)
 	}
+	arr, ok := fu.Response().([]*replicationNode)
+	if !ok {
+		fmt.Println("Unknown return type: ", fu.Response())
+		return
+	}
+	go this.replNodeRemoved(arr[0], arr[1], arr[2])
 }
 
 // valid nodes is a list of node hostnames that are allowed to send heartbeats
@@ -250,15 +270,18 @@ func beatRecvController(quit *bool, hbSock *net.UDPConn, deathReport func(*repli
 
 	validLock := &this.state.mtx
 	validNodes := &this.state.chain
+	hbSock.SetReadBuffer(1 << 16)
 
 	for !*quit {
-		buf := make([]byte, 1024)
-		hbSock.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
+		buf := make([]byte, 128)
+		hbSock.SetReadDeadline(time.Now().Add(30 * time.Millisecond))
 		n, addr, err := hbSock.ReadFromUDP(buf)
+		var id string
 		if err == io.EOF {
 			fmt.Println("Heartbeat receiver closed")
 			break
 		}
+
 		//ewww
 		if err != nil && strings.Contains(err.Error(), "timeout") {
 			goto check
@@ -266,12 +289,11 @@ func beatRecvController(quit *bool, hbSock *net.UDPConn, deathReport func(*repli
 
 		if err != nil {
 			fmt.Println("Error reading from UDP: ", err)
-			continue
+			goto check
 		}
 
-	check:
+		id = string(buf[:n])
 
-		id := string(buf[:n])
 		validLock.RLock()
 		if validNodes.ContainsId(id) {
 			validLock.RUnlock()
@@ -285,15 +307,17 @@ func beatRecvController(quit *bool, hbSock *net.UDPConn, deathReport func(*repli
 			continue
 		}
 
+	check:
+
 		//TODO: reenable heartbeart death reporting
-		/*for k, v := range nodes {
+		for k, v := range nodes {
 			elapsed := time.Since(v)
-			if elapsed > 500*time.Millisecond {
+			if elapsed > 200*time.Millisecond {
 				fmt.Println("Node with id ", k, " is dead, removning from list, no heartbeat for ", elapsed.Milliseconds(), " ms")
-				deathReport(this.state.chain.GetNodeById(k))
 				delete(nodes, k)
+				deathReport(this.state.chain.GetNodeById(k))
 			}
-		}*/
+		}
 
 		//fmt.Println("Received heartbeat from: ", addr)
 	}
@@ -351,14 +375,16 @@ func myLeadershipObserver(rft *raft.Raft, sock *net.UDPConn) {
 	}
 }
 
-/*func leadershipObserver(c <-chan raft.Observation) {
+func observerFunc() {
 	for {
-		obs := <-c
-		if this.raft.State() != raft.Leader {
-			//do nothing if not leader
-			continue
+		obs := <-clusterEvents
+		leader, ok1 := obs.Data.(raft.LeaderObservation)
+		peer, ok2 := obs.Data.(raft.PeerObservation)
+		if ok1 {
+			fmt.Println("Leadership changed", leader.LeaderAddr, leader.LeaderID)
 		}
-		//data := obs.Data.(raft.LeaderObservation)
-		go myLeadershipObserver(this.raft, hbSock)
+		if ok2 {
+			fmt.Println("Peer changed", peer.Removed, peer.Peer)
+		}
 	}
-}*/
+}

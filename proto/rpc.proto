@@ -39,6 +39,7 @@ message Neighbors {
 service ReplicationProvider {
     rpc PutInternal(InternalEntry) returns (google.protobuf.Empty);
     rpc Commit(EntryCommited) returns (google.protobuf.Empty);
+    rpc StreamEntries(stream InternalEntry) returns (google.protobuf.Empty);
 }
 
 service ControllerEvents {
@@ -48,6 +49,8 @@ service ControllerEvents {
     rpc PrevChanged(Node) returns (google.protobuf.Empty);
     // The parameter is the node that is the new leader
     rpc LeaderChanged(Node) returns (google.protobuf.Empty);
+    //rpc ControllerAdded(Node) returns (google.protobuf.Empty);
+    //rpc ControllerRemoved(Node) returns (google.protobuf.Empty);
 }
 
 service Controller {

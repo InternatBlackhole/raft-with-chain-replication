@@ -1,6 +1,7 @@
 #!/bin/bash
 
 replStart () {
+    make replicatorExe
     howMany=${1:-5}
     for x in $(seq 1 $howMany); do
         numstr=$(printf "%02d" $x)
@@ -20,8 +21,9 @@ killAllJobs () {
 #}
 
 startControllers () {
+    make controllerExe
     mkdir -p outs
-    rm -r outs/*
+    rm -fr outs/*
 
     howMany=${1:-3}
     hosts=()
@@ -31,19 +33,20 @@ startControllers () {
     done
     mkdir -p "outs/cont00/"
     #set -o xtrace
-    ./controllerExe -addr "localhost:20000" -raftDataDir "outs/cont00/" -raftId 1 -rb -cl "$(join_by , ${hosts[@]})" >"outs/cont00.txt" 2>&1 &
+    #-cl "$(join_by , ${hosts[@]})"
+    ./controllerExe -addr "localhost:20000" -raftDataDir "outs/cont00/" -raftId 0 -rb >"outs/cont00.txt" 2>&1 &
     #set +o xtrace
     if [ $howMany -eq 1 ]; then
         return
     fi
-    sleep 2s # wait for leader to be elected
+    sleep 3s # wait for leader to be elected
     for x in $(seq 1 $(($howMany - 1)) ); do
         myport=$(( 20000 + $x ))
         numstr=$(printf "%02d" $x)
         mkdir -p "outs/cont$numstr/"
         #./controllerExe -addr "${hosts[$x]/;*/}" -raftDataDir "outs/cont$numstr" -raftId $x -rb $(join_by , "${hosts[@]}") >"outs/cont$numstr.txt" 2>&1 &
         ./controllerExe -addr "localhost:$myport" -raftDataDir "outs/cont$numstr" -raftId $x -cl "localhost:20000" >"outs/cont$numstr.txt" 2>&1 &
-        ./raftadminCli localhost:20000 add_voter $x "localhost:$myport" 0
+        #./raftadminCli localhost:20000 add_voter $x "localhost:$myport" 0
     done
 }
 
@@ -57,4 +60,9 @@ cmdofprogram () {
         printf " -> "
         readlink /proc/$x/fd/1
     done
+}
+
+client () {
+    make clientExe
+    ./clientExe -controller "localhost:20000"
 }
