@@ -41,7 +41,7 @@ message Neighbors {
 service ReplicationProvider {
     rpc PutInternal(InternalEntry) returns (google.protobuf.Empty);
     rpc Commit(EntryCommited) returns (google.protobuf.Empty);
-    rpc StreamEntries(stream InternalEntry) returns (google.protobuf.Empty);
+    rpc StreamEntries(stream InternalEntry) returns (stream EntryCommited);
 }
 
 service ControllerEvents {
@@ -51,8 +51,8 @@ service ControllerEvents {
     rpc PrevChanged(Node) returns (google.protobuf.Empty);
     // The parameter is the node that is the new leader
     rpc LeaderChanged(Node) returns (google.protobuf.Empty);
-    //rpc ControllerAdded(Node) returns (google.protobuf.Empty);
-    //rpc ControllerRemoved(Node) returns (google.protobuf.Empty);
+    // Initiates the transfer of data to the Node
+    rpc InitiateTransfer(Node) returns (google.protobuf.Empty);
 }
 
 service Controller {
@@ -64,10 +64,14 @@ service Controller {
     rpc GetTail(google.protobuf.Empty) returns (Node);
     // Gets the port of the current controller receiving heartbeat
     rpc GetHeartbeatEndpoint(google.protobuf.Empty) returns (google.protobuf.UInt32Value);
-    // Register into the chain, triggers NextChanged and PrevChanged events
+    // Register into the chain
     rpc RegisterAsReplicator(Node) returns (Neighbors);
     // Register into the controller cluster with id, will only succeed on leader, return the index of the node in the cluster
     rpc RegisterAsController(Node) returns (google.protobuf.UInt64Value);
+    // Called by the current tail that the new tail is ready, and sets new tail, arg is to who it is done
+    rpc MarkTransferDone(Node) returns (google.protobuf.Empty);
+    // Reports the death of a node
+    rpc ReportDeath(Node) returns (google.protobuf.Empty);
 }
 
 service PutProvider {

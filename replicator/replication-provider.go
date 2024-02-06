@@ -30,11 +30,17 @@ type replicatorNode struct {
 }
 
 func myerr(err string) string {
-	return ("Error: " + err + " from node " + strconv.Itoa(myPort))
+	return ("Error: " + err + " from node " + strconv.Itoa(info.port))
 }
 
-func NewReplicatorNode(prev NextReplicator, next NextReplicator, storage *sync.Map) *replicatorNode {
-	return &replicatorNode{prev: prev, next: next, publisher: NewAgent(), storage: storage}
+func NewReplicatorNode(prev NextReplicator, next NextReplicator, storage *sync.Map /*, controller LeaderGetter*/) *replicatorNode {
+	return &replicatorNode{
+		prev:      prev,
+		next:      next,
+		publisher: NewAgent(),
+		storage:   storage,
+		//myController: controller,
+	}
 }
 
 func (r *replicatorNode) PutInternal(ctx context.Context, in *rpc.InternalEntry) (*emptypb.Empty, error) {
@@ -119,15 +125,28 @@ func (r *replicatorNode) StreamEntries(stream rpc.ReplicationProvider_StreamEntr
 		if err == io.EOF {
 			//no more entries
 			fmt.Println("Storage synced")
-			return stream.SendAndClose(&emptypb.Empty{})
-		}
-		if ent == nil {
-			fmt.Println("Received nil entry")
 			return nil
 		}
-		e := newEntry(ent)
-		e.commitedVersion = ent.Version
-		r.storage.Store(ent.Key, e)
+		if ent == nil {
+			return nil
+		}
+		saved, existed := r.storage.LoadOrStore(ent.Key, newEntry(ent))
+		e := saved.(entry)
+		if existed {
+			//version in this case is the commited one
+			if ent.Version <= e.commitedVersion {
+				//skip older version
+				continue
+			}
+		} else {
+			//was just created
+			e.commitedVersion = ent.Version
+			r.storage.Store(ent.Key, e)
+		}
+		err = stream.Send(&rpc.EntryCommited{Key: ent.Key, Version: ent.Version})
+		if err != nil {
+			fmt.Println("Error in StreamEntries: ", err)
+		}
 	}
 }
 

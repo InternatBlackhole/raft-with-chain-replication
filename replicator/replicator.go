@@ -22,15 +22,16 @@ import (
 
 var (
 	controllerHostname string
-	myPort             int
-	meId               string
-	controllers        []string
+	//	myPort             int
+	//meId               string
+	controllers []string
+	info        myinfo
 )
 
 func init() {
 	flag.StringVar(&controllerHostname, "controller", "", "controller hostname:port combination")
-	flag.IntVar(&myPort, "port", 0, "port to listen on")
-	flag.StringVar(&meId, "meId", "", "my id")
+	flag.IntVar(&info.port, "port", 0, "port to listen on")
+	flag.StringVar(&info.id, "meId", "", "my id")
 }
 
 func errPanic(err error) {
@@ -50,22 +51,24 @@ func main() {
 		panic("controller hostname not set")
 	}
 
-	if myPort == 0 {
+	if info.port == 0 {
 		panic("port not set")
 	}
 
-	if meId == "" {
+	if info.id == "" {
 		panic("meId not set")
 	}
 	controllers = flag.Args()
 
 	storage := new(sync.Map)
 
-	fmt.Printf("Starting node %s on port %d\n", meId, myPort)
+	fmt.Printf("Starting node %s on port %d\n", info.id, info.port)
 
 	host, err := "localhost", error(nil) //os.Hostname()
 	errPanic(err)
-	fmt.Printf("%s:%d\n", host, myPort)
+	fmt.Printf("%s:%d\n", host, info.port)
+
+	info.addr = host
 
 	// Connect to the controller node to get leader info
 	conn, err := getControllerNode(controllerHostname)
@@ -87,11 +90,11 @@ func main() {
 	ready := make(chan struct{})
 
 	//listen on all addresses
-	lst, err := net.Listen("tcp", ":"+strconv.Itoa(myPort))
+	lst, err := net.Listen("tcp", ":"+strconv.Itoa(info.port))
 	errPanic(err)
 
 	go func() {
-		fmt.Println("Serving on port ", myPort)
+		fmt.Println("Serving on port ", info.port)
 		close(ready)
 		err = s.Serve(lst)
 		if err != nil {
@@ -109,13 +112,13 @@ func main() {
 	pb.RegisterControllerEventsServer(s, chainControl)
 	fmt.Println("Registered Servers")
 
-	fmt.Printf("Node %s started on port %d\n", meId, myPort)
+	fmt.Printf("Node %s started on port %d\n", info.id, info.port)
 
 	<-ready
 	fmt.Println("Registering with controller...")
 	//register also reports next and prev node info
 	ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
-	neighs, err := chainControl.RegisterAsReplicator(ctx, &pb.Node{Address: host, Port: uint32(myPort), Id: &meId})
+	neighs, err := chainControl.RegisterAsReplicator(ctx, &pb.Node{Address: host, Port: uint32(info.port), Id: &info.id})
 	if err != nil {
 		fmt.Println("could not register with controller: ", err)
 	}
@@ -168,5 +171,19 @@ func grpcDialOptions(nobuffer bool) []grpc.DialOption {
 
 func ctxTimeout() (context.Context, context.CancelFunc) {
 	//TODO: change timeout to 1 second
-	return context.WithTimeout(context.Background(), 10*time.Second)
+	return context.WithTimeout(context.Background(), 3*time.Second)
+}
+
+type myinfo struct {
+	addr string
+	port int
+	id   string
+}
+
+func (m *myinfo) PortString() string {
+	return strconv.Itoa(int(m.port))
+}
+
+func (m *myinfo) String() string {
+	return net.JoinHostPort(m.addr, m.PortString()) + "|" + m.id
 }

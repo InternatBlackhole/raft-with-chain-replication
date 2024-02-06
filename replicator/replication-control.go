@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"strconv"
 	"strings"
@@ -74,7 +75,6 @@ func (c *chainControl) prevGetter() func() pb.ReplicationProviderClient {
 func (c *chainControl) NextChanged(ctx context.Context, next *pb.Node) (*emptypb.Empty, error) {
 	c.mtx.Lock()
 	defer c.mtx.Unlock()
-	wasTail := c.next == nil
 	if c.next != nil {
 		c.next.Close()
 		c.next = nil
@@ -85,38 +85,6 @@ func (c *chainControl) NextChanged(ctx context.Context, next *pb.Node) (*emptypb
 		c.next = getNode(next.Address + ":" + strconv.Itoa(int(next.Port)))
 	}
 	fmt.Println("Next changed to: ", next.Address, ":", next.Port)
-
-	if wasTail {
-		fmt.Println("Sending storage to new next...")
-		go func() {
-			prov := pb.NewReplicationProviderClient(c.next)
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			str, err := prov.StreamEntries(ctx)
-			if err != nil {
-				fmt.Println("Error streaming entries to new next: ", err)
-				cancel()
-				return
-			}
-			iserror := false
-			c.storage.Range(func(key, value interface{}) bool {
-				entry := value.(entry)
-				fmt.Println("Sending entry: ", key, ":", entry.value, ":", entry.pendingVersion)
-				err = str.Send(&pb.InternalEntry{Key: key.(string), Value: entry.value, Version: entry.pendingVersion})
-				iserror = err != nil
-				return !iserror
-			})
-			cancel()
-			if iserror {
-				fmt.Println("Error sending entries to new next: ", err)
-				return
-			}
-			err = str.CloseSend()
-			if err != nil {
-				fmt.Println("Error closing stream to new next: ", err)
-				return
-			}
-		}()
-	}
 
 	return &emptypb.Empty{}, nil
 }
@@ -144,6 +112,65 @@ func (c *chainControl) LeaderChanged(ctx context.Context, leader *pb.Node) (*emp
 		panic(errors.Join(errors.New("could not connect to leader "), err))
 	}
 	c.leaderChanged(conn, leader)
+	return &emptypb.Empty{}, nil
+}
+
+func (c *chainControl) InitiateTransfer(ctx context.Context, in *pb.Node) (*emptypb.Empty, error) {
+	if in == nil {
+		return nil, errors.New("node not set")
+	}
+	fmt.Println("Sending storage to new next...")
+	conn, err := grpc.Dial(in.Address+":"+strconv.Itoa(int(in.Port)), grpcDialOptions(false)...)
+	if err != nil {
+		return nil, errors.Join(errors.New("could not connect to requested next"), err)
+	}
+	prov := pb.NewReplicationProviderClient(conn)
+	//ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	str, err := prov.StreamEntries(ctx)
+	if err != nil {
+		fmt.Println("Error streaming entries to new next: ", err)
+		//cancel()
+		return nil, err
+	}
+	iserror := false
+	syncDone := make(chan struct{})
+	go func() {
+		//receiver
+		defer close(syncDone)
+		for {
+			val, err := str.Recv()
+			if err == io.EOF {
+				return
+			}
+			fmt.Println("New tail added entry: ", val.Key, "commitedVersion:", val.Version)
+		}
+	}()
+	c.storage.Range(func(key, value interface{}) bool {
+		entry := value.(entry)
+		fmt.Println("Sending entry: ", key, ":", entry.value, ":", entry.commitedVersion)
+		err = str.Send(&pb.InternalEntry{Key: key.(string), Value: entry.value, Version: entry.commitedVersion})
+		iserror = err != nil
+		return !iserror
+	})
+	if iserror {
+		fmt.Println("Error sending entries to requested: ", err)
+		return nil, err
+	}
+	err = str.CloseSend()
+	if err != nil {
+		fmt.Println("Error closing stream to requested: ", err)
+		return nil, err
+	}
+	<-syncDone
+	fmt.Println("Storage sent to requested, reporting done")
+	//ctx, cancel = ctxTimeout()
+	c.mtx.RLock()
+	_, err = c.MarkTransferDone(ctx, in)
+	c.mtx.RUnlock()
+	//cancel()
+	if err != nil {
+		fmt.Println("Error in MarkTransferDone: ", err)
+	}
 	return &emptypb.Empty{}, nil
 }
 
@@ -195,7 +222,7 @@ func (c *chainControl) leaderChanged(newLeader *grpc.ClientConn, lNode *pb.Node)
 	//TODO: more stuff needs to happen
 	fmt.Println("Leader changed to: ", lNode.Address, ":", lNode.Port)
 
-	go c.heartbeat(meId)
+	go c.heartbeat(info.id)
 
 	c.leaderInit = true
 	c.triggerInitDone()
