@@ -134,7 +134,7 @@ func main() {
 			}
 			fmt.Println("Connected to read node: ", hostname)
 		default:
-			fmt.Println("Unknown command")
+			fmt.Println("Unknown command", cmd)
 		}
 	}
 }

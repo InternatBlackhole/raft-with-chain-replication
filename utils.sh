@@ -69,7 +69,7 @@ replicator () {
     if [ -z "$cluster" ]; then
         cluster="localhost:20000"
     fi
-    ./replicatorExe -controller $addr -meId $id -port $port $cluster >"$outs/out$id.txt" 2>&1 &
+    ./replicatorExe -controller $addr -meId $id -port $port $cluster >"outs/out$id.txt" 2>&1 &
 }
 
 launch () {

@@ -333,36 +333,6 @@ func myLeadershipObserver(rft *raft.Raft, sock *net.UDPConn) {
 			quit = true
 			//report that leadership has changed
 			//NOW HANDLED BY NEW LEADER
-			/*laddr, lid := rft.LeaderWithID()
-			if lid == "" {
-				fmt.Println("no leader, maybe elections are ongoing?")
-				continue
-			}
-			host, port, err := net.SplitHostPort(string(laddr))
-			if err != nil {
-				fmt.Println("Error splitting host and port: ", err)
-				continue
-			}
-			this.state.mtx.RLock()
-			for val := this.state.chain.Front(); val != nil; val = val.Next() {
-				node := val.Value
-				conn, err := node.lazyDial()
-				if err != nil {
-					fmt.Println("Error connecting to node: ", err)
-					continue
-				}
-				p, err := strconv.Atoi(port)
-				if err != nil {
-					fmt.Println("Error converting port to int: ", err)
-					continue
-				}
-				_, err = conn.LeaderChanged(context.Background(), &rpc.Node{Address: host, Port: uint32(p)})
-				if err != nil {
-					fmt.Println("Error calling LeaderChanged: ", err)
-					continue
-				}
-			}
-			this.state.mtx.RUnlock()*/
 		}
 	}
 }

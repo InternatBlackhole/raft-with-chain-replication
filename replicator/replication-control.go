@@ -74,7 +74,6 @@ func (c *chainControl) prevGetter() func() pb.ReplicationProviderClient {
 // received from leader node
 func (c *chainControl) NextChanged(ctx context.Context, next *pb.Node) (*emptypb.Empty, error) {
 	c.mtx.Lock()
-	defer c.mtx.Unlock()
 	if c.next != nil {
 		c.next.Close()
 		c.next = nil
@@ -85,6 +84,8 @@ func (c *chainControl) NextChanged(ctx context.Context, next *pb.Node) (*emptypb
 		c.next = getNode(next.Address + ":" + strconv.Itoa(int(next.Port)))
 	}
 	fmt.Println("Next changed to: ", next.Address, ":", next.Port)
+	c.mtx.Unlock()
+	//c.InitiateTransfer(ctx, next)
 
 	return &emptypb.Empty{}, nil
 }
@@ -161,6 +162,7 @@ func (c *chainControl) InitiateTransfer(ctx context.Context, in *pb.Node) (*empt
 		fmt.Println("Error closing stream to requested: ", err)
 		return nil, err
 	}
+	fmt.Println("Waiting for receiver to finish...")
 	<-syncDone
 	fmt.Println("Storage sent to requested, reporting done")
 	//ctx, cancel = ctxTimeout()

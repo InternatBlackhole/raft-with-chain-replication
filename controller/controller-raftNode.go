@@ -73,18 +73,19 @@ func (c *controllerNode) GetHeartbeatEndpoint(ctx context.Context, in *emptypb.E
 }
 
 func (c *controllerNode) RegisterAsReplicator(ctx context.Context, in *pb.Node) (*pb.Neighbors, error) {
-	if c.raft.State() != raft.Leader {
-		return nil, errors.New("not leader")
+	err := c.checkParams(in)
+	if err != nil {
+		return nil, err
 	}
 
 	fmt.Println("Registering replicator: ", in.Address, ":", in.Port, " with id: ", *in.Id)
 
-	if in.Id == nil || *in.Id == "" {
-		return nil, errors.New("node id not set")
-	}
-
 	c.Lock()
 	defer c.Unlock()
+
+	/*if c.state.syncing {
+		return nil, errors.New("syncing, retry later")
+	}*/
 
 	data, err := proto.Marshal(in)
 	if err != nil {
@@ -120,21 +121,70 @@ func (c *controllerNode) RegisterAsReplicator(ctx context.Context, in *pb.Node) 
 }
 
 func (c *controllerNode) RegisterAsController(ctx context.Context, in *pb.Node) (*wrapperspb.UInt64Value, error) {
-	if c.raft.State() != raft.Leader {
-		return nil, errors.New("not leader")
-	}
-
-	if in.Id == nil || *in.Id == "" {
-		return nil, errors.New("node id not set")
+	err := c.checkParams(in)
+	if err != nil {
+		return nil, err
 	}
 
 	fu := c.raft.AddVoter(raft.ServerID(*in.Id), raft.ServerAddress(in.Address+":"+strconv.Itoa(int(in.Port))), 0, 1*time.Second)
-	err := fu.Error()
+	err = fu.Error()
 	if err != nil {
 		fmt.Println("Error adding voter: ", err)
 		return nil, err
 	}
 	return &wrapperspb.UInt64Value{Value: fu.Index()}, nil
+}
+
+func (c *controllerNode) MarkTransferDone(ctx context.Context, in *pb.Node) (*emptypb.Empty, error) {
+	err := c.checkParams(in)
+	if err != nil {
+		return nil, err
+	}
+
+	fu := c.raft.ApplyLog(raft.Log{Data: []byte{}, Extensions: []byte(TransferFinish)}, 1*time.Second)
+	err = fu.Error()
+	if err != nil {
+		fmt.Println("Error applying log: ", err)
+		return nil, err
+	}
+	return &emptypb.Empty{}, nil
+}
+
+// so your neighor died, and you are reporting it
+func (c *controllerNode) ReportDeath(ctx context.Context, in *pb.Node) (*emptypb.Empty, error) {
+	// possible replacement for heartbeat
+	err := c.checkParams(in)
+	if err != nil {
+		return nil, err
+	}
+
+	//remove node from chain
+	data, err := proto.Marshal(in)
+	if err != nil {
+		fmt.Println("Error marshalling node: ", err)
+		return nil, err
+	}
+	fu := c.raft.ApplyLog(raft.Log{Data: data, Extensions: []byte(NodeRemove)}, 1*time.Second)
+	if err := fu.Error(); err != nil {
+		fmt.Println("Error applying log: ", err)
+	}
+	arr, ok := fu.Response().([]*replicationNode)
+	if !ok {
+		fmt.Println("Unknown return type: ", fu.Response())
+		return nil, errors.New("error occured")
+	}
+	this.replNodeRemoved(arr[0], arr[1], arr[2])
+	return &emptypb.Empty{}, nil
+}
+
+func (c *controllerNode) checkParams(in *pb.Node) error {
+	if c.raft.State() != raft.Leader {
+		return errors.New("not leader")
+	}
+	if in != nil && (in.Id == nil || *in.Id == "") {
+		return errors.New("node id not set")
+	}
+	return nil
 }
 
 func (c *controllerNode) mustEmbedUnimplementedControllerServer() {
@@ -162,7 +212,7 @@ func (c *controllerNode) changeHead(newHead *replicationNode) {
 		fmt.Println("Error marshalling node: ", err)
 		return
 	}
-	fu := c.raft.ApplyLog(raft.Log{Data: data, Extensions: []byte(HeadChaned)}, 2*time.Second)
+	fu := c.raft.ApplyLog(raft.Log{Data: data, Extensions: []byte(HeadChanged)}, 2*time.Second)
 	if err := fu.Error(); err != nil {
 		fmt.Println("Error applying log: ", err)
 	}
@@ -180,7 +230,7 @@ func (c *controllerNode) changeTail(newTail *replicationNode) {
 		fmt.Println("Error marshalling node: ", err)
 		return
 	}
-	fu := c.raft.ApplyLog(raft.Log{Data: data, Extensions: []byte(TailChaned)}, 2*time.Second)
+	fu := c.raft.ApplyLog(raft.Log{Data: data, Extensions: []byte(TailChanged)}, 2*time.Second)
 	if err := fu.Error(); err != nil {
 		fmt.Println("Error applying log: ", err)
 	}
@@ -198,6 +248,7 @@ func (c *controllerNode) replNodeAdded(prev, current, next *replicationNode) (*p
 	if prev == nil {
 		//there was no previous node
 		c.changeHead(current)
+		//in this case still change tail
 		c.changeTail(current)
 		return &pb.Neighbors{Prev: prev.ToNode(), Next: &pb.Node{}}, nil
 	}
@@ -217,7 +268,14 @@ func (c *controllerNode) replNodeAdded(prev, current, next *replicationNode) (*p
 	}
 	cancel()
 
-	c.changeTail(current)
+	ctx, cancel = ctxTimeout()
+	_, err = prevClient.InitiateTransfer(ctx, currentNode)
+	if err != nil {
+		fmt.Println("Error initiating transfer to next node ", prev.String(), ": ", err)
+	}
+	cancel()
+
+	//c.changeTail(current) //now done when transfer is done
 
 	return &pb.Neighbors{Prev: prev.ToNode(), Next: &pb.Node{}}, nil
 }

@@ -115,14 +115,20 @@ func main() {
 	fmt.Printf("Node %s started on port %d\n", info.id, info.port)
 
 	<-ready
-	fmt.Println("Registering with controller...")
+	fmt.Println("Registering with controller (entering loop)...")
 	//register also reports next and prev node info
-	ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
-	neighs, err := chainControl.RegisterAsReplicator(ctx, &pb.Node{Address: host, Port: uint32(info.port), Id: &info.id})
-	if err != nil {
+	var neighs *pb.Neighbors
+	for {
+		//will try every 0.5 seconds
+		time.Sleep(500 * time.Millisecond)
+		ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
+		neighs, err = chainControl.RegisterAsReplicator(ctx, &pb.Node{Address: host, Port: uint32(info.port), Id: &info.id})
+		if err == nil {
+			break
+		}
 		fmt.Println("could not register with controller: ", err)
+		cancel()
 	}
-	cancel()
 
 	fmt.Println("Registered with controller")
 	if neighs.Prev != nil && neighs.Prev.Address != "" {

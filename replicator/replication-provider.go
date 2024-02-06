@@ -50,18 +50,22 @@ func (r *replicatorNode) PutInternal(ctx context.Context, in *rpc.InternalEntry)
 	fmt.Printf("Stored uncommited value %s for key %s\n", in.Value, in.Key)
 	if next == nil {
 		// i am a tail node
-		r.storage.Store(in.Key, newEntry(in))
+		ent := newEntry(in)
+		ent.commitedVersion = in.Version
+		r.storage.Store(in.Key, ent)
 		fmt.Printf("Stored commited value %s for key %s, version %d\n", in.Value, in.Key, in.Version)
 		//start commit process
 		prev := r.prev()
 		//check if i am the only node
 		if prev != nil {
-			ctx, cancel := ctxTimeout()
-			_, err = prev.Commit(ctx, &rpc.EntryCommited{Key: in.Key, Version: in.Version})
-			if err != nil {
-				fmt.Println("Error in commit: ", err)
-			}
-			cancel()
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				_, err = prev.Commit(ctx, &rpc.EntryCommited{Key: in.Key, Version: in.Version})
+				if err != nil {
+					fmt.Println("Error in commit: ", err)
+				}
+				cancel()
+			}()
 		}
 	} else {
 		// i am not a tail node, send Put to next
@@ -108,15 +112,17 @@ func (r *replicatorNode) Commit(ctx context.Context, in *rpc.EntryCommited) (*em
 	prev := r.prev()
 	if prev != nil {
 		//i am not a head node
-		ctx, cancel := ctxTimeout()
-		_, err = prev.Commit(ctx, in)
-		if err != nil {
-			fmt.Println("Error in Commit: ", err)
-		}
-		cancel()
+		go func() {
+			ctx, cancel := ctxTimeout()
+			_, err = prev.Commit(ctx, in)
+			if err != nil {
+				fmt.Println("Error in Commit: ", err)
+			}
+			cancel()
+		}()
 	}
 	//i am a head node, do nothing
-	return &emptypb.Empty{}, err
+	return &emptypb.Empty{}, nil
 }
 
 func (r *replicatorNode) StreamEntries(stream rpc.ReplicationProvider_StreamEntriesServer) error {
