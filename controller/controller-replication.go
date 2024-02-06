@@ -41,7 +41,6 @@ func (r *replicationNode) lazyDial() (rpc.ControllerEventsClient, error) {
 		if err != nil {
 			return nil, err
 		}
-		//i hope this copies correctly
 		r.conn = conn
 	}
 	return rpc.NewControllerEventsClient(r.conn), nil
@@ -68,12 +67,9 @@ func (r *replicationNode) Copy() *replicationNode {
 type replicationChain struct {
 	sync.RWMutex
 	list
-	//list.List
-	//idCache map[string]*replicationNode
 }
 
 func newReplicationChain() *replicationChain {
-	//return &replicationChain{List: *list.New() /*, idCache: make(map[string]*replicationNode)*/}
 	return &replicationChain{list: *newList()}
 }
 
@@ -82,8 +78,6 @@ func (r *replicationChain) AddNode(node *replicationNode) *replicationNode {
 	r.Lock()
 	defer r.Unlock()
 
-	//r.PushBack(nil)
-	//r.Back().Value = node
 	r.PushBack(node)
 	if r.Len() <= 1 {
 		return nil
@@ -91,11 +85,6 @@ func (r *replicationChain) AddNode(node *replicationNode) *replicationNode {
 	back := r.Back().Prev()
 	val := back.Value
 	return val
-	/*r.list = append(r.list, node)
-	if len(r.list) <= 1 {
-		return nil
-	}
-	return r.list[len(r.list)-2]*/
 }
 
 // RemoveNode removes a node from the chain and returns the neighbouring nodes (prev, next), nil if there isn't one
@@ -126,20 +115,9 @@ func (r *replicationChain) RemoveNode(node *replicationNode, fun func(*replicati
 		}
 	}
 	return prev, next
-
-	/*if len(r.list) <= 1 {
-		return nil, nil
-	}
-
-	slices.DeleteFunc(r.list, func(i *replicationNode) bool {
-		return i.id == node.id
-	})*/
 }
 
 func (r *replicationChain) ContainsId(id string) bool {
-	//could use the cache, but this is critical
-	//_, ok := r.idCache[id]
-	//return ok
 	r.RLock()
 	defer r.RUnlock()
 
@@ -153,10 +131,6 @@ func (r *replicationChain) ContainsId(id string) bool {
 }
 
 func (r *replicationChain) GetNodeById(id string) *replicationNode {
-	/*nod, ok := r.idCache[id]
-	if ok {
-		return nod
-	}*/
 	r.RLock()
 	defer r.RUnlock()
 

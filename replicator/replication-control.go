@@ -17,13 +17,6 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
-/*type controllerInfo struct {
-	ctrl  pb.ControllerClient
-	mtx   sync.Mutex
-	hb    *net.UDPConn
-	close chan bool
-}*/
-
 type chainControl struct {
 	mtx  sync.RWMutex
 	next *grpc.ClientConn
@@ -42,10 +35,6 @@ type chainControl struct {
 
 	pb.UnimplementedControllerEventsServer
 }
-
-/*func newControllerInfo(ctrl pb.ControllerClient) *controllerInfo {
-	return &controllerInfo{ctrl: ctrl, close: make(chan bool, 0)}
-}*/
 
 // chan bool is used to signal that all initializations are done
 func newChainControl(leaderNode *rpc.Node, storage *sync.Map) (*chainControl, <-chan struct{}) {
@@ -145,8 +134,6 @@ func (c *chainControl) PrevChanged(ctx context.Context, prev *pb.Node) (*emptypb
 		c.prev = getNode(prev.Address + ":" + strconv.Itoa(int(prev.Port)))
 	}
 	fmt.Println("Prev changed to: ", prev.Address, ":", prev.Port)
-	/*c.prevInit = true
-	c.triggerInitDone()*/
 	return &emptypb.Empty{}, nil
 }
 
@@ -159,17 +146,6 @@ func (c *chainControl) LeaderChanged(ctx context.Context, leader *pb.Node) (*emp
 	c.leaderChanged(conn, leader)
 	return &emptypb.Empty{}, nil
 }
-
-/*func (c *chainControl) ControllerAdded(ctx context.Context, ctrl *pb.Node) (*emptypb.Empty, error) {
-	c.mtx.Lock()
-	defer c.mtx.Unlock()
-
-	c.ControllerClient = getControllerNode(ctrl.Address + ":" + strconv.Itoa(int(ctrl.Port)))
-	return &emptypb.Empty{}, nil
-}
-
-func (c *chainControl) ControllerRemoved(ctx context.Context, ctrl *pb.Node) (*emptypb.Empty, error) {
-}*/
 
 func getNode(hostname string) *grpc.ClientConn {
 	conn, err := grpc.Dial(hostname, grpcDialOptions(false)...)
@@ -194,10 +170,6 @@ func (c *chainControl) leaderChanged(newLeader *grpc.ClientConn, lNode *pb.Node)
 	}
 
 	// Connect to the leader node
-	/*conn, err := getControllerNode(newLeader.Address + ":" + strconv.Itoa(int(newLeader.Port)))
-	if err != nil {
-		panic(errors.Join(errors.New("could not connect to leader "), err))
-	}*/
 	c.controllerConn = newLeader
 	c.ControllerClient = pb.NewControllerClient(newLeader)
 
@@ -230,48 +202,9 @@ func (c *chainControl) leaderChanged(newLeader *grpc.ClientConn, lNode *pb.Node)
 }
 
 // if there is no leader because maybe elections are going on, this will try call every half second for 5 seconds
-/*func (c *chainControl) GetLeader(ctx context.Context, in *emptypb.Empty) (*pb.Node, error) {
-	//c.ControllerClient is nil
-	c.mtx.Lock()
-	defer c.mtx.Unlock()
-	fmt.Println("My leader executed")
-	node, err := c.ControllerClient.GetLeader(ctx, in)
-	if err != nil {
-		fmt.Println("c.ControllerClient.GetLeader error: ", err)
-		//failed to get leader, but controller node is still alive
-		if strings.Contains(err.Error(), "elections ongoing") {
-			fmt.Println("Elections ongoing")
-			for i := 0; i < 10; i++ {
-				time.Sleep(500 * time.Millisecond)
-				node, err := c.ControllerClient.GetLeader(ctx, in)
-				if err == nil {
-					return node, nil
-				}
-			}
-		} else {
-			fmt.Println("ControllerClient is dead")
-			//c.ControllerClient is dead, pick one from the list and try if he is alive
-			for _, cont := range controllers {
-				conn, err := getControllerNode(cont)
-				if err == nil {
-					fmt.Println("Connected to controller: ", cont)
-					ctrl := pb.NewControllerClient(conn)
-					node, err := ctrl.GetLeader(ctx, in)
-					if err == nil {
-						//fmt.Println("Leader:", node.Address, node.Port)
-						return node, nil
-					}
-					conn.Close()
-				}
-			}
-			return nil, errors.New("could not connect to any controller")
-		}
-	}
-	return node, nil
-}*/
 
 func (c *chainControl) triggerInitDone() {
-	if /*c.nextInit && c.prevInit &&*/ c.leaderInit && c.initFinish != nil {
+	if c.leaderInit && c.initFinish != nil {
 		close(c.initFinish)
 		c.initFinish = nil
 	}
@@ -294,26 +227,10 @@ func (c *chainControl) heartbeat(id string) {
 			fmt.Println("Waiting for new leader...")
 			c.leaderHb = nil
 			c.mtx.RUnlock()
-			/*ctx, cancel := ctxTimeout()
-			newLeader, err := c.GetLeader(ctx, &emptypb.Empty{})
-			cancel()
-			if err != nil {
-				panic(err)
-			}
-			//will launch new heartbeat, this one quits
-			conn, err := getControllerNode(newLeader.Address + ":" + strconv.Itoa(int(newLeader.Port)))
-			if err != nil {
-				panic(err)
-			}*/
-			//c.leaderChanged(conn, newLeader)
 			return
 		} else {
 			c.mtx.RUnlock()
 		}
-		/*beats++
-		if beats%100 == 0 {
-			fmt.Println("100 Heartbeats sent")
-		}*/
 		select {
 		case val := <-c.leaderClose:
 			if val {

@@ -18,14 +18,6 @@ import (
 
 type NextReplicator func() rpc.ReplicationProviderClient
 
-/*type NodeType int
-
-const (
-	CHAIN_HEAD   NodeType = 1 << iota
-	CHAIN_MIDDLE NodeType = 1 << iota
-	CHAIN_TAIL   NodeType = 1 << iota
-)*/
-
 type replicatorNode struct {
 	storage   *sync.Map // perhaps make it a sync.Map
 	prev      NextReplicator
@@ -64,7 +56,6 @@ func (r *replicatorNode) PutInternal(ctx context.Context, in *rpc.InternalEntry)
 				fmt.Println("Error in commit: ", err)
 			}
 			cancel()
-			//panic("prev is nil, figure it out, are you running on one node?")
 		}
 	} else {
 		// i am not a tail node, send Put to next
@@ -96,7 +87,6 @@ func (r *replicatorNode) Commit(ctx context.Context, in *rpc.EntryCommited) (*em
 	val, loaded := r.storage.Load(in.Key)
 	if !loaded {
 		//this should never happen
-		//return &emptypb.Empty{}, errors.New(myerr("key not found"))
 		panic(errors.New("key not found, should not happen in Commit"))
 	}
 	//TODO: remove this artifical delay

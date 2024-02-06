@@ -44,10 +44,6 @@ func getControllerNode(hostname string) (*grpc.ClientConn, error) {
 }
 
 func main() {
-	/*flag.Usage = func() {
-		fmt.Println("Usage: replicator [flags] <controller1> <controller2> ...")
-		flag.PrintDefaults()
-	}*/
 	flag.Parse()
 
 	if controllerHostname == "" {
@@ -117,7 +113,6 @@ func main() {
 
 	<-ready
 	fmt.Println("Registering with controller...")
-	//chainControl.mtx.RLock()
 	//register also reports next and prev node info
 	ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
 	neighs, err := chainControl.RegisterAsReplicator(ctx, &pb.Node{Address: host, Port: uint32(myPort), Id: &meId})
@@ -141,7 +136,6 @@ func main() {
 		fmt.Println("No next node")
 		chainControl.next = nil
 	}
-	//chainControl.mtx.RUnlock()
 
 	fmt.Println("Waiting for chain info from controller... (waiting for initDone)")
 	<-initDone

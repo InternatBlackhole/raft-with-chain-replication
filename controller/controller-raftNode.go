@@ -19,30 +19,14 @@ import (
 
 type controllerNode struct {
 	sync.RWMutex
-	//emtx     sync.RWMutex //ends mutex
-	//headHost *replicationNode //!moved to state
-	//tailHost *replicationNode //!moved to state
 
 	hbPort int
 
 	state *raftState
 	raft  *raft.Raft
 
-	//cmtx  sync.RWMutex //chain mutex
-	//chain replicationChain
-
 	pb.UnimplementedControllerServer
 }
-
-/*func genCallback(f func(*replicationNode)) func(string) {
-	return func(addr string) {
-		node, err := getNodeFromHostname(addr)
-		if err != nil {
-			return
-		}
-		f(newReplicationNode(node.Address, int(node.Port)))
-	}
-}*/
 
 func newControllerNode(hbPort int, raft *raft.Raft, state *raftState) *controllerNode {
 	if state == nil {
@@ -64,27 +48,21 @@ func (c *controllerNode) GetLeader(ctx context.Context, in *emptypb.Empty) (*pb.
 }
 
 func (c *controllerNode) GetHead(ctx context.Context, in *emptypb.Empty) (*pb.Node, error) {
-	//c.RLock()
-	//defer c.RUnlock()
 	c.state.mtx.RLock()
 	defer c.state.mtx.RUnlock()
 	if c.state.head == nil {
 		return nil, nil
 	}
 	return c.state.head.ToNode(), nil
-	//return c.headHost.ToNode(), nil
 }
 
 func (c *controllerNode) GetTail(ctx context.Context, in *emptypb.Empty) (*pb.Node, error) {
-	//c.RLock()
-	//defer c.RUnlock()
 	c.state.mtx.RLock()
 	defer c.state.mtx.RUnlock()
 	if c.state.tail == nil {
 		return nil, nil
 	}
 	return c.state.tail.ToNode(), nil
-	//return c.tailHost.ToNode(), nil
 }
 
 func (c *controllerNode) GetHeartbeatEndpoint(ctx context.Context, in *emptypb.Empty) (*wrapperspb.UInt32Value, error) {
@@ -134,36 +112,14 @@ func (c *controllerNode) RegisterAsReplicator(ctx context.Context, in *pb.Node) 
 			fmt.Println("Error adding replicator: ", e)
 			return nil, errors.New("error occured")
 		}
-		//n.ControlCluster = c.controlClusterString()
 		return n, e
 	} else {
 		fmt.Println("Unknown return type: ", ret)
 		return nil, errors.New("error occured")
 	}
-	//return &emptypb.Empty{}, nil
 }
 
-/*func (c *controllerNode) controlClusterString() string {
-	fu := c.raft.GetConfiguration()
-	if err := fu.Error(); err != nil {
-		fmt.Println("Error getting configuration: ", err)
-		return ""
-	}
-	peers := fu.Configuration().Servers
-	str := ""
-	for _, peer := range peers {
-		if peer.Suffrage == raft.Voter {
-			str += string(peer.Address) + "|"
-		}
-	}
-	if str == "" {
-		return ""
-	}
-	return str[:len(str)-1] //ignore last |
-}*/
-
 func (c *controllerNode) RegisterAsController(ctx context.Context, in *pb.Node) (*wrapperspb.UInt64Value, error) {
-	//return nil, errors.New("not implemented")
 	if c.raft.State() != raft.Leader {
 		return nil, errors.New("not leader")
 	}
@@ -200,8 +156,6 @@ func getNodeFromHostname(host string) (*pb.Node, error) {
 }
 
 func (c *controllerNode) changeHead(newHead *replicationNode) {
-	//c.Lock()
-	//defer c.Unlock()
 	node := newHead.ToNode()
 	data, err := proto.Marshal(node)
 	if err != nil {
@@ -217,12 +171,9 @@ func (c *controllerNode) changeHead(newHead *replicationNode) {
 		fmt.Println("Unknown return type: ", fu.Response())
 		return
 	}
-	//c.headHost = newHead
 }
 
 func (c *controllerNode) changeTail(newTail *replicationNode) {
-	//c.Lock()
-	//defer c.Unlock()
 	node := newTail.ToNode()
 	data, err := proto.Marshal(node)
 	if err != nil {
@@ -238,7 +189,6 @@ func (c *controllerNode) changeTail(newTail *replicationNode) {
 		fmt.Println("Unknown return type: ", fu.Response())
 		return
 	}
-	//c.tailHost = newTail
 }
 
 // run when a replication node is added, always adds to the end of the chain (next should be nil)
@@ -279,9 +229,6 @@ func ctxTimeout() (context.Context, context.CancelFunc) {
 
 // run when a replication node is removed
 func (c *controllerNode) replNodeRemoved(prev, removed, next *replicationNode) {
-	//TODO: i think this is buggy
-	//c.cmtx.Lock()
-	//defer c.cmtx.Unlock()
 
 	if prev == nil && next == nil {
 		//there was only one node, now there are none, reset head and tail
@@ -349,6 +296,4 @@ func (c *controllerNode) replNodeRemoved(prev, removed, next *replicationNode) {
 		}
 		cancel()
 	}
-
-	//c.emtx.Unlock()
 }

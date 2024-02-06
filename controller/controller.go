@@ -44,7 +44,6 @@ func init() {
 	flag.StringVar(&raftId, "raftId", "localhost:", "Node id")
 	flag.StringVar(&raftDir, "raftDataDir", "", "raft data directory")
 	flag.BoolVar(&raftBootstrap, "rb", false, "Bootstrap the raft cluster?")
-	//flag.StringVar(&raftJoin, "cl", "", "Join an existing cluster, <hostname:port;id> a comma separated list of nodes")
 }
 
 var this *controllerNode //this node
@@ -63,9 +62,6 @@ func main() {
 	if raftDir == "" {
 		panic("raftDataDir not set")
 	}
-
-	//	fmt.Println("Waiting 100ms for other nodes to start")
-	//	time.Sleep(100 * time.Millisecond)
 
 	var err error
 	_, mport, err = net.SplitHostPort(myAddr)
@@ -132,8 +128,6 @@ func createCluster(ctx context.Context, id, address string, state raft.FSM) (*ra
 	d.LogOutput = os.Stdout
 	d.LogLevel = "WARN"
 
-	//fmt.Println("config: ", d)
-
 	//logStore := raft.NewInmemStore()
 	//stableStore := raft.NewInmemStore()
 	//snapshotStore := raft.NewInmemSnapshotStore()
@@ -159,29 +153,6 @@ func createCluster(ctx context.Context, id, address string, state raft.FSM) (*ra
 	}
 
 	if raftBootstrap {
-		/*split := strings.Split(raftJoin, ",")
-		servers := make([]raft.Server, 0, len(split))
-		for i, s := range split {
-			if !strings.Contains(s, ";") {
-				panic("Invalid server id")
-			}
-			split2 := strings.Split(s, ";")
-			if len(split2) != 2 {
-				panic("Invalid server id format, should be <hostname:port;id>")
-			}
-			servers = append(servers, raft.Server{
-				//Suffrage: raft.Staging,
-				ID:      raft.ServerID(split2[1]),
-				Address: raft.ServerAddress(split2[0]),
-			})
-			fmt.Println("Added server: ", servers[i])
-		}
-		/*servers = append(servers, raft.Server{
-			Suffrage: raft.Voter,
-			ID:       raft.ServerID(id),
-			Address:  raft.ServerAddress(address),
-		})*/
-
 		cfg := raft.Configuration{
 			Servers: []raft.Server{
 				{
@@ -194,7 +165,6 @@ func createCluster(ctx context.Context, id, address string, state raft.FSM) (*ra
 		fu := r.BootstrapCluster(cfg)
 		if err = fu.Error(); err != nil {
 			fmt.Println("(ignoring) Error bootstrapping cluster: ", err)
-			//panic(err)
 		}
 	} else {
 		l := strings.Split(raftJoin[0], ";")
@@ -300,7 +270,6 @@ func beatRecvController(quit *bool, hbSock *net.UDPConn, deathReport func(*repli
 			nodes[id] = time.Now()
 		} else {
 			validLock.RUnlock()
-			//fmt.Println("Received heartbeat from invalid node: ", addr)
 			continue
 		}
 
@@ -314,8 +283,6 @@ func beatRecvController(quit *bool, hbSock *net.UDPConn, deathReport func(*repli
 				deathReport(this.state.chain.GetNodeById(k))
 			}
 		}
-
-		//fmt.Println("Received heartbeat from: ", addr)
 	}
 }
 
@@ -360,7 +327,7 @@ func myLeadershipObserver(rft *raft.Raft, sock *net.UDPConn) {
 			}
 			this.state.mtx.RUnlock()
 		} else {
-			//i am no leader
+			//i am no longer leader
 			//stop heartbeat receiver
 			fmt.Println("I am not the leader")
 			quit = true
