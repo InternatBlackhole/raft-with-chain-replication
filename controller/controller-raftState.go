@@ -33,8 +33,11 @@ func newRaftState() *raftState {
 }
 
 func (r *raftState) Apply(l *raft.Log) interface{} {
+	if l.Extensions == nil {
+		return nil
+	}
 	ext := LogType(l.Extensions)
-
+	fmt.Println("Applying log: ", ext)
 	r.mtx.Lock()
 	defer r.mtx.Unlock()
 
@@ -42,7 +45,14 @@ func (r *raftState) Apply(l *raft.Log) interface{} {
 	if err != nil {
 		return err
 	}
-	node := newReplicationNode(data.Address, int(data.Port), *data.Id)
+	var node *replicationNode
+	if l.Data != nil {
+		var id string = ""
+		if data.Id != nil {
+			id = *data.Id
+		}
+		node = newReplicationNode(data.Address, int(data.Port), id)
+	}
 
 	switch ext {
 	case NodeAdd:

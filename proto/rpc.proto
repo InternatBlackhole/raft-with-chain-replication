@@ -34,6 +34,8 @@ message EntryCommited {
 message Neighbors {
     Node prev = 1;
     Node next = 2;
+    // hostname:port|hostname:port|hostname:port... of controllers
+    //string controlCluster = 3;
 }
 
 service ReplicationProvider {

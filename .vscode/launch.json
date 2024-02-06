@@ -32,8 +32,8 @@
                 "0",
                 "-raftDataDir",
                 "${workspaceFolder}/dbg/raft0",
-                "-cl",
-                "localhost:20000;0",
+                //"-cl",
+                //"localhost:20000;0",
                 "-rb",
             ],
             "preLaunchTask": "Delete raft0"

@@ -132,7 +132,9 @@ func (c *controllerNode) RegisterAsReplicator(ctx context.Context, in *pb.Node) 
 		n, e := c.replNodeAdded(arr[0], arr[1], arr[2])
 		if n == nil {
 			fmt.Println("Error adding replicator: ", e)
+			return nil, errors.New("error occured")
 		}
+		//n.ControlCluster = c.controlClusterString()
 		return n, e
 	} else {
 		fmt.Println("Unknown return type: ", ret)
@@ -140,6 +142,25 @@ func (c *controllerNode) RegisterAsReplicator(ctx context.Context, in *pb.Node) 
 	}
 	//return &emptypb.Empty{}, nil
 }
+
+/*func (c *controllerNode) controlClusterString() string {
+	fu := c.raft.GetConfiguration()
+	if err := fu.Error(); err != nil {
+		fmt.Println("Error getting configuration: ", err)
+		return ""
+	}
+	peers := fu.Configuration().Servers
+	str := ""
+	for _, peer := range peers {
+		if peer.Suffrage == raft.Voter {
+			str += string(peer.Address) + "|"
+		}
+	}
+	if str == "" {
+		return ""
+	}
+	return str[:len(str)-1] //ignore last |
+}*/
 
 func (c *controllerNode) RegisterAsController(ctx context.Context, in *pb.Node) (*wrapperspb.UInt64Value, error) {
 	//return nil, errors.New("not implemented")

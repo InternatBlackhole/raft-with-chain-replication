@@ -31,7 +31,7 @@ var (
 	raftDir string
 	//could also use the AddVoter method
 	raftBootstrap bool
-	raftJoin      string
+	raftJoin      []string
 	state         raftState
 	clusterEvents = make(chan raft.Observation, 3)
 	observer      *raft.Observer
@@ -44,7 +44,7 @@ func init() {
 	flag.StringVar(&raftId, "raftId", "localhost:", "Node id")
 	flag.StringVar(&raftDir, "raftDataDir", "", "raft data directory")
 	flag.BoolVar(&raftBootstrap, "rb", false, "Bootstrap the raft cluster?")
-	flag.StringVar(&raftJoin, "cl", "", "Join an existing cluster, <hostname:port;id> a comma separated list of nodes")
+	//flag.StringVar(&raftJoin, "cl", "", "Join an existing cluster, <hostname:port;id> a comma separated list of nodes")
 }
 
 var this *controllerNode //this node
@@ -55,8 +55,8 @@ func main() {
 	if raftId == "" {
 		panic("raftId not set")
 	}
-
-	if !raftBootstrap && raftJoin == "" {
+	raftJoin = flag.Args()
+	if !raftBootstrap && len(raftJoin) == 0 {
 		panic("enter address of nodes in cluster")
 	}
 
@@ -130,6 +130,7 @@ func createCluster(ctx context.Context, id, address string, state raft.FSM) (*ra
 	d := raft.DefaultConfig()
 	d.LocalID = raft.ServerID(id)
 	d.LogOutput = os.Stdout
+	d.LogLevel = "WARN"
 
 	//fmt.Println("config: ", d)
 
@@ -196,11 +197,7 @@ func createCluster(ctx context.Context, id, address string, state raft.FSM) (*ra
 			//panic(err)
 		}
 	} else {
-		if raftJoin == "" {
-			return nil, nil, fmt.Errorf("no leader to join")
-		}
-		split := strings.Split(raftJoin, ",")
-		l := strings.Split(split[0], ";")
+		l := strings.Split(raftJoin[0], ";")
 		conn, err := grpc.Dial(l[0], grpcDialOptions(true)...)
 		if err != nil {
 			panic(err)
@@ -309,7 +306,6 @@ func beatRecvController(quit *bool, hbSock *net.UDPConn, deathReport func(*repli
 
 	check:
 
-		//TODO: reenable heartbeart death reporting
 		for k, v := range nodes {
 			elapsed := time.Since(v)
 			if elapsed > 200*time.Millisecond {
@@ -335,6 +331,34 @@ func myLeadershipObserver(rft *raft.Raft, sock *net.UDPConn) {
 			fmt.Println("I am the leader")
 			quit = false
 			go beatRecvController(&quit, sock, deathReporter)
+			//now tell all replicators in chain that leadership changed
+			laddr, _ := rft.LeaderWithID() //is me
+			this.state.mtx.RLock()
+			for val := this.state.chain.Front(); val != nil; val = val.Next() {
+				conn, err := val.Value.lazyDial()
+				if err != nil {
+					fmt.Println("Error connecting to node: ", err)
+					continue
+				}
+				host, port, err := net.SplitHostPort(string(laddr))
+				if err != nil {
+					fmt.Println("Error splitting host and port: ", err)
+					continue
+				}
+				p, err := strconv.Atoi(port)
+				if err != nil {
+					fmt.Println("Error converting port to int: ", err)
+					continue
+				}
+				ctx, cancel := ctxTimeout()
+				_, err = conn.LeaderChanged(ctx, &rpc.Node{Address: host, Port: uint32(p)})
+				cancel()
+				if err != nil {
+					fmt.Println("Error calling LeaderChanged: ", err)
+					continue
+				}
+			}
+			this.state.mtx.RUnlock()
 		} else {
 			//i am no leader
 			//stop heartbeat receiver

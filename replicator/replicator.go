@@ -24,7 +24,14 @@ var (
 	controllerHostname string
 	myPort             int
 	meId               string
+	controllers        []string
 )
+
+func init() {
+	flag.StringVar(&controllerHostname, "controller", "", "controller hostname:port combination")
+	flag.IntVar(&myPort, "port", 0, "port to listen on")
+	flag.StringVar(&meId, "meId", "", "my id")
+}
 
 func errPanic(err error) {
 	if err != nil {
@@ -32,45 +39,42 @@ func errPanic(err error) {
 	}
 }
 
-func getControllerNode(hostname string) pb.ControllerClient {
-	conn, err := grpc.Dial(hostname, grpcDialOptions(true)...)
-	errPanic(err)
-	return pb.NewControllerClient(conn)
+func getControllerNode(hostname string) (*grpc.ClientConn, error) {
+	return grpc.Dial(hostname, grpcDialOptions(true)...)
 }
 
 func main() {
-	hostname := flag.String("controller", "", "controller hostname:port combination")
-	myport := flag.Int("port", 0, "port to listen on")
-	id := flag.String("meId", "", "my id")
-
+	/*flag.Usage = func() {
+		fmt.Println("Usage: replicator [flags] <controller1> <controller2> ...")
+		flag.PrintDefaults()
+	}*/
 	flag.Parse()
 
-	if *hostname == "" {
+	if controllerHostname == "" {
 		panic("controller hostname not set")
 	}
 
-	if *myport == 0 {
+	if myPort == 0 {
 		panic("port not set")
 	}
 
-	if *id == "" {
+	if meId == "" {
 		panic("meId not set")
 	}
+	controllers = flag.Args()
 
 	storage := new(sync.Map)
 
-	fmt.Printf("Starting node %s on port %d\n", *id, *myport)
+	fmt.Printf("Starting node %s on port %d\n", meId, myPort)
 
 	host, err := "localhost", error(nil) //os.Hostname()
 	errPanic(err)
-	fmt.Printf("%s:%d\n", host, *myport)
-
-	controllerHostname = *hostname
-	myPort = *myport
-	meId = *id
+	fmt.Printf("%s:%d\n", host, myPort)
 
 	// Connect to the controller node to get leader info
-	ctrl := getControllerNode(controllerHostname)
+	conn, err := getControllerNode(controllerHostname)
+	errPanic(err)
+	ctrl := pb.NewControllerClient(conn)
 
 	ctx, cancel := ctxTimeout()
 	leaderNode, err := ctrl.GetLeader(ctx, &emptypb.Empty{})
