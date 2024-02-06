@@ -332,7 +332,8 @@ func myLeadershipObserver(rft *raft.Raft, sock *net.UDPConn) {
 			fmt.Println("I am not the leader")
 			quit = true
 			//report that leadership has changed
-			laddr, lid := rft.LeaderWithID()
+			//NOW HANDLED BY NEW LEADER
+			/*laddr, lid := rft.LeaderWithID()
 			if lid == "" {
 				fmt.Println("no leader, maybe elections are ongoing?")
 				continue
@@ -361,7 +362,7 @@ func myLeadershipObserver(rft *raft.Raft, sock *net.UDPConn) {
 					continue
 				}
 			}
-			this.state.mtx.RUnlock()
+			this.state.mtx.RUnlock()*/
 		}
 	}
 }

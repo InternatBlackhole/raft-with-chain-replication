@@ -57,6 +57,21 @@ controller () {
     ./controllerExe -addr $addr -raftDataDir $dataDir -raftId $id $cluster >"$dataDir/out.txt" 2>&1 &
 }
 
+replicator () {
+    make replicatorExe
+    local addr=${1:-"localhost:20000"}
+    shift
+    local id=${1:-"rng"}
+    shift
+    local port=${1:?"set port"}
+    shift
+    local cluster=$@
+    if [ -z "$cluster" ]; then
+        cluster="localhost:20000"
+    fi
+    ./replicatorExe -controller $addr -meId $id -port $port $cluster >"$outs/out$id.txt" 2>&1 &
+}
+
 launch () {
     local contNum=${1:?"Please provide controller number"}
     local replNum=${2:?"Please provide replicator number"}
