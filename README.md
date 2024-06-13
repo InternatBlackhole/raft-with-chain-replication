@@ -1,4 +1,4 @@
-##Description
+## Description
 
 This project was created as a part of a subject on distributed systems. 
 
@@ -13,7 +13,7 @@ To run all these programs on local machine run `source utils.sh` in shell to imp
 
 Every program has a `-h` option to get help for using that program
 
-##Building
+## Building
 
 This project uses Go, so have the Golang compiler installed.
 
